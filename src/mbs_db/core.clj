@@ -61,6 +61,12 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
              (assoc % %2 0)) 
           r keys)))
 
+(defn create-tables []
+  (sql/with-connection *db*
+      (sql/create-table :ts2 [:belongs "int"] [:value "int"] [:timestamp "timestamp"])
+      (sql/create-table :tsnames [:name "varchar(255)"] [:belongs "int"])
+      (sql/create-table :metadatajson [:name "varchar(255)"] [:json "varchar(30000)"])))
+
 (defquery count-all-values "Count all values" 
   "select count(*) as num from ts2"
   (:num (first res)))
