@@ -4,14 +4,14 @@
   (:require 
     [clojure.java.jdbc :as sql]
     [clojure.data.json :as json]
-    [clj-cache.cache :as cache]))
+    [clojure.core.memoize :as cache]))
 
 (def ^:dynamic *db* 
-  {:classname   "com.mysql.jdbc.Driver"
-   :subprotocol "mysql"
-   :user        "root"
+  {:classname   "org.h2.Driver"
+   :subprotocol "h2"
+   :user        "sa"
    :password     ""
-   :subname      "//localhost:5029/solarlog"})
+   :subname      "~/solarlog"})
 
 (defn- adhoc [query & params]
   (sql/with-connection *db*
@@ -51,7 +51,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
 (defmacro defquery-cached [name doc-string query & body]
   `(do
      (defquery ~name ~doc-string ~query ~@body)
-     (alter-var-root #'~name cache/cached* ~name (cache/mutable-lru-cache-strategy 10000))))
+     (alter-var-root #'~name cache/memo-lru 30)))
 
 (defn- fix-time
   ([r] (fix-time r :time))
@@ -71,7 +71,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "select count(*) as num from ts2"
   (:num (first res)))
 
-(defquery all-names-limit "Select all pv names (first part of the time series' names)."
+(defquery-cached all-names-limit "Select all pv names (first part of the time series' names)."
   "select distinct SUBSTRING_INDEX(name,'.',1) as name from tsnames limit ?,?"
   (doall (map :name res)))
 
@@ -95,11 +95,11 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "select time, value from ts2 where belongs=(select belongs from tsnames where name=?)  order by time"
   (doall (map fix-time res)))
 
-(defquery all-values-in-time-range "Select all time series data points of a given name that are between two times."
+(defquery-cached all-values-in-time-range "Select all time series data points of a given name that are between two times."
   "select time, value from ts2 where belongs=(select belongs from tsnames where name=?) and time >? and time <?  order by time"
   (doall (map fix-time res)))
 
-(defquery min-max-time-of "Select time of the oldest data point of a time series."
+(defquery-cached min-max-time-of "Select time of the oldest data point of a time series."
   "select min(time) as min, max(time) as max from ts2 where belongs=(select belongs from tsnames where name=?)"
   (fix-time (first res) :min :max))
 
