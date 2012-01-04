@@ -48,10 +48,10 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
              ;; let user handle the results
              ~@body))))))
 
-(defmacro defquery-cached [name doc-string query & body]
+(defmacro defquery-cached [num-to-cache name doc-string query & body]
   `(do
      (defquery ~name ~doc-string ~query ~@body)
-     (alter-var-root #'~name cache/memo-lru 30)))
+     (alter-var-root #'~name cache/memo-lru ~num-to-cache)))
 
 (defn- fix-time
   ([r] (fix-time r :time))
@@ -89,11 +89,11 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "select count(*) as num from ts2"
   (:num (first res)))
 
-(defquery-cached all-names-limit "Select all pv names (first part of the time series' names)."
+(defquery-cached 20000 all-names-limit "Select all pv names (first part of the time series' names)."
   "select distinct SUBSTRING_INDEX(name,'.',1) as name from tsnames limit ?,?"
   (doall (map :name res)))
 
-(defquery count-all-series "Count all available time series."
+(defquery-cached 1 count-all-series "Count all available time series."
   "select count(*) as num from tsnames;"
   (:num (first res)))
 
@@ -113,11 +113,11 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "select time, value from ts2 where belongs=(select belongs from tsnames where name=?)  order by time"
   (doall (map fix-time res)))
 
-(defquery-cached all-values-in-time-range "Select all time series data points of a given name that are between two times."
+(defquery-cached 30 all-values-in-time-range "Select all time series data points of a given name that are between two times."
   "select time, value from ts2 where belongs=(select belongs from tsnames where name=?) and time >? and time <?  order by time"
   (doall (map fix-time res)))
 
-(defquery-cached min-max-time-of "Select time of the oldest data point of a time series."
+(defquery-cached 10000 min-max-time-of "Select time of the oldest data point of a time series."
   "select min(time) as min, max(time) as max from ts2 where belongs=(select belongs from tsnames where name=?)"
   (fix-time (first res) :min :max))
 
