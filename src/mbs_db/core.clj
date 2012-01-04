@@ -65,7 +65,25 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   (sql/with-connection *db*
       (sql/create-table :ts2 [:belongs "int"] [:value "int"] [:timestamp "timestamp"])
       (sql/create-table :tsnames [:name "varchar(255)"] [:belongs "int"])
-      (sql/create-table :metadatajson [:name "varchar(255)"] [:json "varchar(30000)"])))
+      (sql/create-table :metadatadetails 
+                        [:AnlagenKWP "int"]
+                        [:AnzahlWR "int"]
+                        [:BannerZeile1 "varchar(255)"]
+                        [:BannerZeile2 "varchar(255)"]
+                        [:BannerZeile3 "varchar(255)"]
+                        [:HPAusricht "varchar(255)"]
+                        [:HPBetreiber "varchar(255)"]
+                        [:HPEmail "varchar(255)"]
+                        [:HPInbetrieb "varchar(255)"]
+                        [:HPLeistung "varchar(255)"]
+                        [:HPModul "varchar(255)"]
+                        [:HPStandort "varchar(255)"]
+                        [:HPTitel "varchar(255)"]
+                        [:HPWR "varchar(255)"]
+                        [:Serialnr "varchar(255)"]
+                        [:SollYearKWP "int"]
+                        [:Verguetung "int"]
+                        [:id "varchar(255)"])))
 
 (defquery count-all-values "Count all values" 
   "select count(*) as num from ts2"
