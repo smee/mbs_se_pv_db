@@ -129,12 +129,27 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
  order by time"
   (doall (doall (map (comp #(assoc % :value (.doubleValue (:value %))) fix-time) res))))
 
-(defquery-cached get-metadata "get map of metadata for one pv installation"
-  "select json from metadatajson where name=?"
+#_(defquery-cached get-metadata "get map of metadata for one pv installation"
+  "select * from metadatadetails where id=?"
   (when (first res) 
-    (let[m (-> res first :json json/read-json)
-         private-names [:BannerZeile1 :BannerZeile2 :BannerZeile3 :HPBetreiber :HPEmail :HPStandort :HPTitel]]
-      (reduce #(update-in % [%2] encrypt) m private-names))))
+    (let[m (first res)
+         private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel]]
+      (dissoc (reduce #(update-in % [%2] encrypt) m private-names)
+              :id))))
+
+(defn get-metadata "get map of metadata for multiple pv installations in one query" [& names]
+  (let [names (map decrypt-name names)
+        query (apply str "select * from metadatadetails where id=?" (repeat (dec (count names)) " or id=?"))] 
+    ;; run the query
+    (sql/with-connection 
+      *db* 
+      (sql/with-query-results 
+        res 
+        (reduce conj [query] names) 
+        (let [private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel]
+              encrypted (for [r res] (reduce #(update-in % [%2] encrypt) r private-names))]
+          (zipmap names encrypted))))))
+(alter-var-root #'get-metadata cache/memo-lru 1000)
 
 (comment
   
