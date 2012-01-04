@@ -3,7 +3,6 @@
     [mbs-db.util :only (encrypt-name encrypt decrypt-name)])
   (:require 
     [clojure.java.jdbc :as sql]
-    [clojure.data.json :as json]
     [clojure.core.memoize :as cache]))
 
 (def ^:dynamic *db* 
@@ -137,18 +136,21 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
       (dissoc (reduce #(update-in % [%2] encrypt) m private-names)
               :id))))
 
-(defn get-metadata "get map of metadata for multiple pv installations in one query" [& names]
-  (let [names (map decrypt-name names)
-        query (apply str "select * from metadatadetails where id=?" (repeat (dec (count names)) " or id=?"))] 
+(defn get-metadata "get map of metadata for multiple pv installations in one query." 
+  [& names]
+  (let [names_ (map decrypt-name names)
+        query (if names 
+                (apply str "select * from metadatadetails where id=?" (repeat (dec (count names)) " or id=?"))
+                "select * from metadatadetails")] 
     ;; run the query
     (sql/with-connection 
       *db* 
       (sql/with-query-results 
         res 
-        (reduce conj [query] names) 
-        (let [private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel]
+        (reduce conj [query] names_)
+        (let [private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel :id]
               encrypted (for [r res] (reduce #(update-in % [%2] encrypt) r private-names))]
-          (zipmap names encrypted))))))
+          (zipmap (map :id encrypted) encrypted))))))
 (alter-var-root #'get-metadata cache/memo-lru 1000)
 
 (comment
