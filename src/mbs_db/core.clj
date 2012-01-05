@@ -12,7 +12,7 @@
    :password     ""
    :subname      "~/solarlog"})
 
-(defn- adhoc [query & params]
+(defn adhoc [query & params]
   (sql/with-connection *db*
        (sql/with-query-results res (apply vector query params) (doall (for [r res] r)))))
 

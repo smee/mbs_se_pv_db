@@ -5,4 +5,4 @@
                  [org.clojure/java.jdbc "0.1.0"]
                  [org.clojure/data.json "0.1.2"]
                  [org.clojure/core.memoize "0.5.1"]
-                 ])
+                 [mysql/mysql-connector-java "5.1.17"]])
