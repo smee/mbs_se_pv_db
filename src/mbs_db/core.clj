@@ -62,8 +62,8 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
 
 (defn create-tables []
   (sql/with-connection *db*
-      (sql/create-table :ts2 [:belongs "int"] [:value "int"] [:timestamp "timestamp"])
-      (sql/create-table :tsnames [:name "varchar(255)"] [:belongs "int"])
+      ;(sql/create-table :ts2 [:belongs "int"] [:value "int"] [:timestamp "timestamp"])
+      ;(sql/create-table :tsnames [:name "varchar(255)"] [:belongs "int"])
       (sql/create-table :metadatadetails 
                         [:AnlagenKWP "int"]
                         [:AnzahlWR "int"]
@@ -76,6 +76,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
                         [:HPInbetrieb "varchar(255)"]
                         [:HPLeistung "varchar(255)"]
                         [:HPModul "varchar(255)"]
+                        [:HPPostleitzahl "char(5)"]
                         [:HPStandort "varchar(255)"]
                         [:HPTitel "varchar(255)"]
                         [:HPWR "varchar(255)"]
@@ -127,6 +128,12 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
  group by time 
  order by time"
   (doall (doall (map (comp #(assoc % :value (.doubleValue (:value %))) fix-time) res))))
+
+(defquery max-per-day "Select maximum per day of a series in a time interval"
+  "select max(value) as value, date(time) as time from ts2 where belongs=(select belongs from tsnames where name = ?)
+   and time>? and time<?
+   group by date(time) order by time"
+  (doall (map fix-time res)))
 
 #_(defquery-cached get-metadata "get map of metadata for one pv installation"
   "select * from metadatadetails where id=?"
