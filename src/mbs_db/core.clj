@@ -3,14 +3,47 @@
     [mbs-db.util :only (encrypt-name encrypt decrypt-name)])
   (:require 
     [clojure.java.jdbc :as sql]
-    [clojure.core.memoize :as cache]))
+    [clojure.core.memoize :as cache])
+  (:import java.sql.Timestamp))
 
-(def ^:dynamic *db* 
-  {:classname   "org.h2.Driver"
-   :subprotocol "h2"
-   :user        "sa"
-   :password     ""
-   :subname      "~/solarlog"})
+(def h2-config {:classname   "org.h2.Driver"
+                :subprotocol "h2"
+                :user        "sa"
+                :password     ""
+                :subname      "~/solarlog"})
+(def mysql-config {:classname   "com.mysql.jdbc.Driver"
+                   :subprotocol "mysql"
+                   :user        "root"
+                   :password     ""
+                   :subname      "//localhost:5029/solarlog"})
+(def ^:dynamic *db* mysql-config)
+
+(defprotocol ^{:added "1.2"} Time-Coercions
+  "Coerce between various 'resource-namish' things."
+  (^{:tag java.sql.Timestamp} as-sql-timestamp [x] "Coerce argument to java.sql.Timestamp.")
+  (^{:tag java.lang.Long} as-unix-timestamp [x] "Coerce argument to time in milliseconds"))
+
+(extend-protocol Time-Coercions
+  nil
+  (as-sql-timestamp [_] nil)
+  (as-unix-timestamp [_] nil)
+  
+  Long
+  (as-sql-timestamp [i] (Timestamp. i))
+  (as-unix-timestamp [i] i)
+  
+  Timestamp
+  (as-sql-timestamp [s] s)
+  (as-unix-timestamp [s] (.getTime s))
+  
+  java.util.Date
+  (as-sql-timestamp [d] (Timestamp. (.getTime d)))
+  (as-unix-timestamp [d] (.getTime d))
+  
+  java.util.Calendar
+  (as-sql-timestamp [c] (Timestamp. (.getTimeInMillis c)))
+  (as-unix-timestamp [c] (.getTimeInMillis c))
+  )
 
 (defn adhoc [query & params]
   (sql/with-connection *db*
@@ -37,7 +70,8 @@
 sequence of results by manipulating the var 'res'. Handles name obfuscation transparently."
   [name doc-string query & body]
   `(defn ~name ~doc-string[& params#]
-     (let [params# (handle-params params#)] 
+     (let [params# (handle-params params#)
+           sql# ~query] 
        ;; run the query
        (sql/with-connection 
          *db* 
@@ -56,14 +90,14 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   ([r] (fix-time r :time))
   ([r & keys]
   (reduce #(if-let [ts (get % %2)] 
-             (assoc % %2 (.getTime ts))
+             (assoc % %2 (as-unix-timestamp ts))
              (assoc % %2 0)) 
           r keys)))
 
 (defn create-tables []
   (sql/with-connection *db*
-      ;(sql/create-table :ts2 [:belongs "int"] [:value "int"] [:timestamp "timestamp"])
-      ;(sql/create-table :tsnames [:name "varchar(255)"] [:belongs "int"])
+      (sql/create-table :ts2 [:belongs "int"] [:value "int"] [:timestamp "timestamp"])
+      (sql/create-table :tsnames [:name "varchar(255)"] [:belongs "int"])
       (sql/create-table :metadatadetails 
                         [:AnlagenKWP "int"]
                         [:AnzahlWR "int"]
@@ -129,11 +163,44 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
  order by time"
   (doall (doall (map (comp #(assoc % :value (.doubleValue (:value %))) fix-time) res))))
 
-(defquery max-per-day "Select maximum per day of a series in a time interval"
+(defn get-efficiency [id wr-id start end]
+  (let [[pdc-sum pac] (pvalues
+                     (summed-values-in-time-range (format "%s.wr.%s.pdc.string.%%" id wr-id) (as-sql-timestamp start) (as-sql-timestamp end))
+                     (all-values-in-time-range (format "%s.wr.%s.pac" id wr-id) (as-sql-timestamp start) (as-sql-timestamp end)))
+        efficiency (map (fn [a d] (if (< 0 d)  (* 100 (/ a d)) 0)) 
+                        (map :value pac) (map :value pdc-sum))]
+    (map #(hash-map :time % :value %2) (map :time pac) efficiency)))
+(alter-var-root #'get-efficiency cache/memo-lru 1000)
+
+;; TODO more generic? allow all kinds of time intervals, days, weeks, months, years....
+(defquery sum-per-day "Select sum of gains per day of a series in a time interval"
   "select max(value) as value, date(time) as time from ts2 where belongs=(select belongs from tsnames where name = ?)
    and time>? and time<?
    group by date(time) order by time"
   (doall (map fix-time res)))
+(defquery sum-per-week "Select sum of gains per week of a series in a time interval"
+  "select sum(value) as value, time 
+   from   (select max(value) as value, date(time) as time 
+           from   ts2 
+           where  belongs= (select belongs from tsnames where name = ?)
+                  and time>? and time<?
+           group by date(time) 
+           order by time) as daily
+   group by week(time)"
+  (doall (map fix-time res)))
+(defquery sum-per-month "Select sum of gains per month of a series in a time interval"
+  "select sum(value) as value, time from (select max(value) as value, date(time) as time from ts2 where belongs=(select belongs from tsnames where name = ?)
+   and time>? and time<?
+   group by date(time) order by time) as daily
+group by month(time)"
+  (doall (map fix-time res)))
+(defquery sum-per-year "Select sum of gains per year of a series in a time interval"
+  "select sum(value) as value, time from (select max(value) as value, date(time) as time from ts2 where belongs=(select belongs from tsnames where name = ?)
+   and time>? and time<?
+   group by date(time) order by time) as daily
+group by year(time)"
+  (doall (map fix-time res)))
+
 
 #_(defquery-cached get-metadata "get map of metadata for one pv installation"
   "select * from metadatadetails where id=?"
