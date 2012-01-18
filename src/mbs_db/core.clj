@@ -13,8 +13,8 @@
                 :subname      "~/solarlog"})
 (def mysql-config {:classname   "com.mysql.jdbc.Driver"
                    :subprotocol "mysql"
-                   :user        "root"
-                   :password     ""
+                   :user        "read"
+                   :password     "eumread"
                    :subname      "//localhost:5029/solarlog"})
 (def ^:dynamic *db* mysql-config)
 
