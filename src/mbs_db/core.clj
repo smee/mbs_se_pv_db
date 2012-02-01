@@ -193,9 +193,13 @@ group by year(time)"
       *db* 
       (sql/with-query-results 
         res 
-        (reduce conj [query] names_)
-        (let [private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel :id]
-              encrypted (for [r res] (reduce #(update-in % [%2] encrypt) r private-names))]
+        (reduce conj [query] names)
+        (let [;; metadata has wrong encoding, reinterpret every string as UTF8
+              fixed-utf8 (for [r res] (map-values #(if (string? %) (String. (.getBytes %) "UTF8") %) r))
+              ;; censor private data
+              private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel]
+              encrypted (for [r fixed-utf8] 
+                          (reduce #(update-in % [%2] encrypt) r private-names))]
           (zipmap (map :id encrypted) encrypted))))))
 (alter-var-root #'get-metadata cache/memo-lru 1000)
 
