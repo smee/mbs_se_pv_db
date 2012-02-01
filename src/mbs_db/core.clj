@@ -1,6 +1,7 @@
 (ns mbs-db.core
   (:use 
-    [mbs-db.util :only (encrypt-name encrypt decrypt-name)])
+    [mbs-db.util :only (encrypt-name encrypt decrypt-name)]
+    [org.clojars.smee.map :only (map-values)])
   (:require 
     [clojure.java.jdbc :as sql]
     [clojure.core.memoize :as cache])
@@ -49,37 +50,17 @@
   (sql/with-connection *db*
        (sql/with-query-results res (apply vector query params) (doall (for [r res] r)))))
 
-(defn- handle-params 
-  "decrypt the first parameter, assuming it's a name"
-  [params]
-  (when-let [[p & ps] params] 
-    (if (string? p) 
-      (cons (decrypt-name p) ps)
-      params)))
-
-(defn- handle-results
-  "encrypt all names found via accessing key :name in all result maps"
-  [res]
-  (map #(if-let [n (:name %)]
-          (assoc % :name (encrypt-name n))
-          %)
-       res))
-
 (defmacro defquery 
   "Create an sql query that accepts a variable number of paramters and a body that handles the 
 sequence of results by manipulating the var 'res'. Handles name obfuscation transparently."
   [name doc-string query & body]
   `(defn ~name ~doc-string[& params#]
-     (let [params# (handle-params params#)
-           sql# ~query] 
-       ;; run the query
-       (sql/with-connection 
+     (sql/with-connection 
          *db* 
          (sql/with-query-results 
            ~'res (reduce conj [~query] params#) 
-           (let [~'res (handle-results ~'res)]
-             ;; let user handle the results
-             ~@body))))))
+           ;; let user handle the results
+           ~@body))))
 
 (defmacro defquery-cached [num-to-cache name doc-string query & body]
   `(do
@@ -202,18 +183,9 @@ group by year(time)"
   (doall (map fix-time res)))
 
 
-#_(defquery-cached get-metadata "get map of metadata for one pv installation"
-  "select * from metadatadetails where id=?"
-  (when (first res) 
-    (let[m (first res)
-         private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel]]
-      (dissoc (reduce #(update-in % [%2] encrypt) m private-names)
-              :id))))
-
 (defn get-metadata "get map of metadata for multiple pv installations in one query." 
   [& names]
-  (let [names_ (map decrypt-name names)
-        query (if names 
+  (let [query (if names 
                 (apply str "select * from metadatadetails where id=?" (repeat (dec (count names)) " or id=?"))
                 "select * from metadatadetails")] 
     ;; run the query
