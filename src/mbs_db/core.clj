@@ -154,32 +154,25 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
 (alter-var-root #'get-efficiency cache/memo-lru 1000)
 
 ;; TODO more generic? allow all kinds of time intervals, days, weeks, months, years....
-(defquery sum-per-day "Select sum of gains per day of a series in a time interval"
-  "select max(value) as value, date(time) as time from ts2 where belongs=(select belongs from tsnames where name = ?)
-   and time>? and time<?
-   group by date(time) order by time"
+(def ^:private daily "select  sum(maxes.value) as value, maxes.t as time from
+     (select max(value) as value, date(time) as t, belongs 
+      from ts2 
+      where belongs in (select belongs from tsnames where name like ?) 
+      and time>? and time<?
+      group by t, belongs) as maxes
+   group by maxes.t order by time")
+
+(defquery-cached 10 sum-per-day "Select sum of gains per day of a series in a time interval"
+  daily
   (doall (map fix-time res)))
-(defquery sum-per-week "Select sum of gains per week of a series in a time interval"
-  "select sum(value) as value, time 
-   from   (select max(value) as value, date(time) as time 
-           from   ts2 
-           where  belongs= (select belongs from tsnames where name = ?)
-                  and time>? and time<?
-           group by date(time) 
-           order by time) as daily
-   group by week(time)"
+(defquery-cached 10 sum-per-week "Select sum of gains per week of a series in a time interval"
+  (str "select sum(value) as value, time from (" daily ") as daily group by week(time)")
   (doall (map fix-time res)))
-(defquery sum-per-month "Select sum of gains per month of a series in a time interval"
-  "select sum(value) as value, time from (select max(value) as value, date(time) as time from ts2 where belongs=(select belongs from tsnames where name = ?)
-   and time>? and time<?
-   group by date(time) order by time) as daily
-group by month(time)"
+(defquery-cached 10 sum-per-month "Select sum of gains per month of a series in a time interval"
+  (str "select sum(value) as value, time from (" daily ") as daily group by month(time)")
   (doall (map fix-time res)))
-(defquery sum-per-year "Select sum of gains per year of a series in a time interval"
-  "select sum(value) as value, time from (select max(value) as value, date(time) as time from ts2 where belongs=(select belongs from tsnames where name = ?)
-   and time>? and time<?
-   group by date(time) order by time) as daily
-group by year(time)"
+(defquery-cached 10 sum-per-year "Select sum of gains per year of a series in a time interval"
+  (str "select sum(value) as value, time from (" daily ") as daily group by year(time)")
   (doall (map fix-time res)))
 
 
