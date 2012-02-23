@@ -189,7 +189,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
         (reduce conj [query] names)
         (let [;; metadata has wrong encoding, reinterpret every string as latin1 :(
               fixed-utf8 (for [r res] (map-values #(if (string? %) (String. (.getBytes % "latin1")) %) r))
-              fixed-income (for [r res] (update-in r [:verguetung] #(double (/ % 100))))
+              fixed-income (for [r fixed-utf8] (update-in r [:verguetung] #(double (/ % 100))))
               ;; censor private data
               private-names [:bannerzeile1 :bannerzeile2 :bannerzeile3 :hpbetreiber :hpemail :hpstandort :hptitel]
               encrypted (for [r fixed-income] 
