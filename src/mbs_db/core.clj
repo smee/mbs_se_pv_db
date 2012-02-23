@@ -54,7 +54,7 @@
   "Create an sql query that accepts a variable number of paramters and a body that handles the 
 sequence of results by manipulating the var 'res'. Handles name obfuscation transparently."
   [name doc-string query & body]
-  `(defn ~name ~doc-string[& params#]
+  `(defn ~name ~doc-string [& params#]
      (sql/with-connection 
          *db* 
          (sql/with-query-results 
@@ -62,7 +62,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
            ;; let user handle the results
            ~@body))))
 
-(defmacro defquery-cached [num-to-cache name doc-string query & body]
+(defmacro defquery-cached [name num-to-cache doc-string query & body]
   `(do
      (defquery ~name ~doc-string ~query ~@body)
      (alter-var-root #'~name cache/memo-lru ~num-to-cache)))
@@ -104,11 +104,11 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "select count(*) as num from ts2"
   (:num (first res)))
 
-(defquery-cached 20000 all-names-limit "Select all pv names (first part of the time series' names)."
+(defquery-cached all-names-limit 20000 "Select all pv names (first part of the time series' names)."
   "select distinct SUBSTRING_INDEX(name,'.',1) as name from tsnames limit ?,?"
   (doall (map :name res)))
 
-(defquery-cached 1 count-all-series "Count all available time series."
+(defquery-cached count-all-series 1 "Count all available time series."
   "select count(*) as num from tsnames;"
   (:num (first res)))
 
@@ -128,11 +128,11 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "select time, value from ts2 where belongs=(select belongs from tsnames where name=?)  order by time"
   (doall (map fix-time res)))
 
-(defquery-cached 30 all-values-in-time-range "Select all time series data points of a given name that are between two times."
+(defquery-cached all-values-in-time-range 30 "Select all time series data points of a given name that are between two times."
   "select time, value from ts2 where belongs=(select belongs from tsnames where name=?) and time >? and time <?  order by time"
   (doall (map fix-time res)))
 
-(defquery-cached 10000 min-max-time-of "Select time of the oldest data point of a time series."
+(defquery-cached min-max-time-of 10000 "Select time of the oldest data point of a time series."
   "select min(time) as min, max(time) as max from ts2 where belongs=(select belongs from tsnames where name=?)"
   (fix-time (first res) :min :max))
 
@@ -162,16 +162,16 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
       group by t, belongs) as maxes
    group by maxes.t order by time")
 
-(defquery-cached 10 sum-per-day "Select sum of gains per day of a series in a time interval"
+(defquery-cached sum-per-day 10 "Select sum of gains per day of a series in a time interval"
   daily
   (doall (map fix-time res)))
-(defquery-cached 10 sum-per-week "Select sum of gains per week of a series in a time interval"
+(defquery-cached sum-per-week 10 "Select sum of gains per week of a series in a time interval"
   (str "select sum(value) as value, time from (" daily ") as daily group by week(time)")
   (doall (map fix-time res)))
-(defquery-cached 10 sum-per-month "Select sum of gains per month of a series in a time interval"
+(defquery-cached sum-per-month 10 "Select sum of gains per month of a series in a time interval"
   (str "select sum(value) as value, time from (" daily ") as daily group by month(time)")
   (doall (map fix-time res)))
-(defquery-cached 10 sum-per-year "Select sum of gains per year of a series in a time interval"
+(defquery-cached sum-per-year 10 "Select sum of gains per year of a series in a time interval"
   (str "select sum(value) as value, time from (" daily ") as daily group by year(time)")
   (doall (map fix-time res)))
 
