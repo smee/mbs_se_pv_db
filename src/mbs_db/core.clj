@@ -1,11 +1,13 @@
 (ns mbs-db.core
   (:use 
     [mbs-db.util :only (encrypt-name encrypt decrypt-name)]
-    [org.clojars.smee.map :only (map-values)])
+    [org.clojars.smee 
+     [map :only (map-values)]
+     [time :only (as-unix-timestamp as-sql-timestamp)]])
   (:require 
     [clojure.java.jdbc :as sql]
     [clojure.core.memoize :as cache])
-  (:import java.sql.Timestamp))
+  )
 
 (def h2-config {:classname   "org.h2.Driver"
                 :subprotocol "h2"
@@ -19,32 +21,7 @@
                    :subname      "//localhost:5029/solarlog"})
 (def ^:dynamic *db* mysql-config)
 
-(defprotocol ^{:added "1.2"} Time-Coercions
-  "Coerce between various 'resource-namish' things."
-  (^{:tag java.sql.Timestamp} as-sql-timestamp [x] "Coerce argument to java.sql.Timestamp.")
-  (^{:tag java.lang.Long} as-unix-timestamp [x] "Coerce argument to time in milliseconds"))
 
-(extend-protocol Time-Coercions
-  nil
-  (as-sql-timestamp [_] nil)
-  (as-unix-timestamp [_] nil)
-  
-  Long
-  (as-sql-timestamp [i] (Timestamp. i))
-  (as-unix-timestamp [i] i)
-  
-  Timestamp
-  (as-sql-timestamp [s] s)
-  (as-unix-timestamp [s] (.getTime s))
-  
-  java.util.Date
-  (as-sql-timestamp [d] (Timestamp. (.getTime d)))
-  (as-unix-timestamp [d] (.getTime d))
-  
-  java.util.Calendar
-  (as-sql-timestamp [c] (Timestamp. (.getTimeInMillis c)))
-  (as-unix-timestamp [c] (.getTimeInMillis c))
-  )
 
 (defn adhoc [query & params]
   (sql/with-connection *db*
@@ -210,4 +187,29 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
       (count-all-series-of "1555"))
     )
   
+  )
+
+(comment
+  
+  (use 'clojure.java.io)
+  (use '[clojure.string :only (split)])
+  (use '[org.clojars.smee.util :only (s2f)])
+  (def series (->> "d:\\Dropbox\\Arbeit\\Projekte\\EUMONIS\\Usecase PSM Solar\\Daten\\average minute INVU1 2012_02_05.csv" file reader line-seq (map #(split % #";"))))
+  (use '[incanter [core :only (view)] charts])
+  (def s2
+    (let [df (java.text.SimpleDateFormat. "dd.MM.yyyy HH:mm")]
+      (cons (first series) (map #(update-in % [0] (fn [d] (.getTime (.parse df d)))) (rest series)))))
+  (def s3 (vec (apply map vector s2)))
+  
+  (let [times (rest (first s3))
+        series (rest s3)
+        names (map first series)
+        nf (java.text.NumberFormat/getInstance java.util.Locale/GERMANY )
+        series (map (fn [s] (map #(.parse nf %) (rest s))) series)
+        c (time-series-plot [] [] :legend true)
+        series (next series)
+        names (next names)]
+    (doseq [[n s] (map list names series) :when (.contains (.toLowerCase n) "apparent")]
+      (add-lines c times s :series-label n)) 
+    (view c))
   )
