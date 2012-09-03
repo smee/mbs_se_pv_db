@@ -101,9 +101,10 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "select count(*) as num from series where plant= ?;"
   (apply + (map :num res)))
 
-(defquery all-series-names-of-plant "Select all time series names with given plant name"
-  "select identification from series where plant=?;"
-  (doall (map :identification res)))
+(defquery all-series-names-of-plant "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
+to display name."
+  "select name, identification from series where plant=?;"
+  (reduce merge (map (comp (partial apply hash-map) (juxt :identification :name)) res)))
 
 ;;;;;;;;; time series values ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
