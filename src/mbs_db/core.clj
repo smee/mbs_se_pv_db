@@ -5,7 +5,21 @@
      [time :only (as-unix-timestamp as-sql-timestamp)]])
   (:require 
     [clojure.java.jdbc :as sql]
-    [clojure.core.memoize :as cache]))
+    [clojure.core.memoize :as cache])
+  (:import com.mchange.v2.c3p0.ComboPooledDataSource))
+
+(defn connection-pool
+  [spec]
+  (let [cpds (doto (ComboPooledDataSource.)
+               (.setDriverClass (:classname spec)) 
+               (.setJdbcUrl (str "jdbc:" (:subprotocol spec) ":" (:subname spec)))
+               (.setUser (:user spec))
+               (.setPassword (:password spec))
+               ;; expire excess connections after 30 minutes of inactivity:
+               (.setMaxIdleTimeExcessConnections (* 30 60))
+               ;; expire connections after 3 hours of inactivity:
+               (.setMaxIdleTime (* 3 60 60)))] 
+    {:datasource cpds}))
 
 (def mysql-config-default {:classname   "com.mysql.jdbc.Driver"
                            :subprotocol "mysql"
@@ -18,10 +32,10 @@
                                  :password (get (System/getenv) "eumdb01_password") ))
 (def mysql-config-psm (assoc mysql-config-default :subname "//localhost:5029/psm"))
 
-(def ^:dynamic *db* mysql-config-psm)
+(def ^:dynamic *db* (delay (connection-pool mysql-config-psm)) )
 
 (defn create-tables-siemens []
-  (sql/with-connection *db*
+  (sql/with-connection @*db*
       (sql/create-table :series_data
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
@@ -56,7 +70,7 @@
 
 (defn import-into-infobright* [table & data-csv-files]
   (sql/with-connection 
-    *db*
+    @*db*
     (apply sql/do-commands 
       "set @bh_dataformat = 'txt_variable'"
       (for [file data-csv-files] 
@@ -67,7 +81,7 @@
 
 
 (defn adhoc [query & params]
-  (sql/with-connection *db*
+  (sql/with-connection @@*db*
        (sql/with-query-results res (apply vector query params) (doall (for [r res] r)))))
 
 (defmacro defquery 
@@ -76,7 +90,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   [name doc-string query & body]
   `(defn ~name ~doc-string [& params#]
      (sql/with-connection 
-         *db* 
+         @*db* 
          (sql/with-query-results 
            ~'res (reduce conj [~query] params#) 
            ;; let user handle the results
@@ -112,7 +126,7 @@ to display name."
 ;  "select time, value from series_data where belongs=(select belongs from tsnames where name=?)  order by time"
 ;  (doall (map fix-time res)))
 
-(defquery-cached all-values-in-time-range 30 "Select all time series data points of a given plant and series id that are between two times."
+(defquery-cached all-values-in-time-range 1 "Select all time series data points of a given plant and series id that are between two times."
   "select timestamp, value from series_data where plant=? and name=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
 
@@ -169,7 +183,7 @@ to display name."
                 (apply str "select * from plant where name=?" (repeat (dec (count names)) " or name=?"))
                 "select * from plant")] 
     ; TODO need real metadata, number of inverters etc.
-    (sql/with-connection *db* 
+    (sql/with-connection @*db* 
        (sql/with-query-results res (reduce conj [query] names)
             (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 1000000) res))))))
 (alter-var-root #'get-metadata cache/memo-lru 100)
