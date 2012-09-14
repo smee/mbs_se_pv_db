@@ -34,15 +34,17 @@
                (.setMaxIdleTime (* 3 60 60)))] 
     {:datasource cpds}))
 
-
-(def ^:private db (atom (connection-pool mysql-config-psm)) )
+(def ^{:doc "map of current database connection settings"} current-db-settings (atom mysql-config-psm))
+(def ^{:private true :doc "connection pool to be used with `with-connection`"} conn (atom (connection-pool @current-db-settings)) )
 
 (defn use-db-settings [settings]
-  (reset! db (connection-pool (merge mysql-config-psm settings))))
+  (let [settings (merge mysql-config-psm settings)] 
+    (reset! current-db-settings settings)
+    (reset! conn (connection-pool settings))))
 
 ;;;;;;;;;;;;;;;;;;;; tables definitions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn create-tables-siemens []
-  (sql/with-connection @db
+  (sql/with-connection @conn
       (sql/create-table :series_data
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
@@ -77,7 +79,7 @@
 ;;;;;;;;;;;;;;;;;; infobright import functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn import-into-infobright* [table & data-csv-files]
   (sql/with-connection 
-    @db
+    @conn
     (apply sql/do-commands 
       "set @bh_dataformat = 'txt_variable'"
       (for [file data-csv-files] 
@@ -89,7 +91,7 @@
 
 ;;;;;;;;;;;;;;;;; query helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn adhoc [query & params]
-  (sql/with-connection @@db
+  (sql/with-connection @@conn
        (sql/with-query-results res (apply vector query params) (doall (for [r res] r)))))
 
 (defmacro defquery 
@@ -98,7 +100,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   [name doc-string query & body]
   `(defn ~name ~doc-string [& params#]
      (sql/with-connection 
-         @db 
+         @conn 
          (sql/with-query-results 
            ~'res (reduce conj [~query] params#) 
            ;; let user handle the results
@@ -195,7 +197,7 @@ to display name."
                 (apply str "select * from plant where name=?" (repeat (dec (count names)) " or name=?"))
                 "select * from plant")] 
     ; TODO need real metadata, number of inverters etc.
-    (sql/with-connection @db 
+    (sql/with-connection @conn 
        (sql/with-query-results res (reduce conj [query] names)
             (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 1000000) res))))))
 (alter-var-root #'get-metadata cache/memo-lru 100)
