@@ -47,9 +47,10 @@
       (.setPassword password))))
 
 (defn connection-status []
-  {:num-connections      (.getNumConnectionsDefaultUser @conn)
-   :num-busy-connections (.getNumBusyConnectionsDefaultUser @conn)
-   :num-idle-connections (.getNumIdleConnectionsDefaultUser @conn)})
+  (let [c (:datasource @conn)] 
+    {:num-connections      (.getNumConnectionsDefaultUser c)
+     :num-busy-connections (.getNumBusyConnectionsDefaultUser c)
+     :num-idle-connections (.getNumIdleConnectionsDefaultUser c)}))
 
 ;;;;;;;;;;;;;;;;;;;; tables definitions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn create-tables-siemens []
@@ -57,10 +58,14 @@
       (sql/create-table :series_data
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
-                        [:timestamp "timestamp"] 
                         [:value "double"] 
                         [:quality "int"] 
-                        [:flags "int"])
+                        [:flags "int"]
+                        [:timestamp "timestamp" "default 0"] 
+                        [:year "smallint"]
+                        [:month "tinyint"]
+                        [:day_of_year "smallint"]
+                        [:day_of_month "tinyint"])
       (sql/create-table :plant
                         [:name"varchar(127)"]
                         [:street "varchar(127)"]
@@ -84,7 +89,15 @@
                         [:component "varchar(127)"] ;name of the origin component
                         [:type "varchar(127)"] ;type of the series
                         [:resolution "int"]) ;average time between two measures in milliseconds
+      (sql/create-table :series_summary
+                        [:plant "varchar(127)" "comment 'lookup'"] ;name of the power plant
+                        [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
+                        [:date "date"]
+                        [:num "integer"]) 
       ))
+#_(defn create-dates-helper-table []
+  (sql/with-connection @conn
+      (sql/create-table :dates [:date "date"])))
 ;;;;;;;;;;;;;;;;;; infobright import functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn import-into-infobright* [table & data-csv-files]
   (sql/with-connection 
@@ -199,6 +212,9 @@ to display name."
   (str "select sum(value) as value, time from (" daily ") as daily group by year(time)")
   (doall (map fix-time res)))
 
+(defquery-cached available-data 1 "select all dates for which there is any data."
+  "select date,sum(num) as num from series_summary where plant=? group by date order by date"
+  (doall (map (fn [{d :date :as m}] (assoc m :date (as-unix-timestamp d))) res)))
 
 (defn get-metadata "get map of metadata for multiple pv installations in one query." 
   [& names]
