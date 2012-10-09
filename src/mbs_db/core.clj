@@ -170,25 +170,6 @@ to display name."
   "select min(timestamp) as min, max(timestamp) as max from series_data where plant=? and name=?"
   (fix-time (first res) :min :max))
 
-;todo
-(defquery summed-values-in-time-range "Select times and added values of all time series that match a given parameter and are between two times."
-  "select time, sum(value) as value 
-     from series_data where belongs in (select belongs from tsnames where name like ?)  
-      and time>? and time<? 
- group by time 
- order by time"
-  (doall (doall (map (comp #(assoc % :value (.doubleValue (:value %))) fix-time) res))))
-;todo
-(defn get-efficiency [id wr-id start end]
-  (let [[pdc-sum pac] (pvalues
-                     (summed-values-in-time-range (format "%s.wr.%s.pdc.string.%%" id wr-id) (as-sql-timestamp start) (as-sql-timestamp end))
-                     (all-values-in-time-range (format "%s.wr.%s.pac" id wr-id) (as-sql-timestamp start) (as-sql-timestamp end)))
-        efficiency (map (fn [a d] (if (< 0 d)  (* 100 (/ a d)) 0)) 
-                        (map :value pac) (map :value pdc-sum))]
-    (map #(hash-map :time % :value %2) (map :time pac) efficiency)))
-(alter-var-root #'get-efficiency cache/memo-lru 1000)
-;todo
-;; TODO more generic? allow all kinds of time intervals, days, weeks, months, years....
 
 (def ^:private daily 
            "select sum(value) as value, maxima.t as time from
@@ -232,3 +213,17 @@ to display name."
   (adhoc "SELECT table_schema, sum( data_length + index_length ) / 1024 / 1024 'Data Base Size in MB',TABLE_COMMENT FROM information_schema.TABLES WHERE ENGINE = 'BRIGHTHOUSE' GROUP BY table_schema"))
 (defn table-statistics []
   (adhoc "SHOW TABLE STATUS WHERE ENGINE='BRIGHTHOUSE'"))
+
+
+(defn rolled-up-values-in-time-range 
+  "Find min, max, and average of values aggregated into `num` time slots."
+  [plant name start end num]
+  (let [s (as-unix-timestamp start) 
+        e (as-unix-timestamp end)
+        interval-in-s (int (/ (- e s) num 1000)) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
+        query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
+               from series_data 
+               where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?"]
+    (sql/with-connection @conn
+       (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
+            (doall (map fix-time res))))))
