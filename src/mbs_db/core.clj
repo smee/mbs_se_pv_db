@@ -34,8 +34,8 @@
                (.setMaxIdleTime (* 3 60 60)))] 
     {:datasource cpds}))
 
-(def ^{:doc "map of current database connection settings"} current-db-settings (atom {}))
-(def ^{:private true :doc "connection pool to be used with `with-connection`"} conn (delay (connection-pool mysql-config-psm)))
+(defonce ^{:doc "map of current database connection settings"} current-db-settings (atom mysql-config-psm))
+(defonce ^{:private true :doc "connection pool to be used with `with-connection`"} conn (delay (connection-pool mysql-config-psm)))
 
 (defn use-db-settings [settings]
   (let [{:keys [user password subname subprotocol]} (merge mysql-config-psm settings)]
