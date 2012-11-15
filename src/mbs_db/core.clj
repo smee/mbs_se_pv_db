@@ -24,6 +24,10 @@
 (defn- connection-pool
   [spec]
   (let [cpds (doto (ComboPooledDataSource.)
+               #_(.setProperties (doto (java.util.Properties.)
+                                 (.setProperty "characterEncoding" "latin1")
+                                 (.setProperty "useUnicode", "true")
+                                 (.setProperty "characterSetResults", "ISO8859_1")))
                (.setDriverClass (:classname spec)) 
                (.setJdbcUrl (str "jdbc:" (:subprotocol spec) ":" (:subname spec)))
                (.setUser (:user spec))
@@ -65,7 +69,8 @@
                         [:year "smallint"]
                         [:month "tinyint"]
                         [:day_of_year "smallint"]
-                        [:day_of_month "tinyint"])
+                        [:day_of_month "tinyint"]
+                        [:hour_of_day "tinyint"])
       (sql/create-table :plant
                         [:name"varchar(127)"]
                         [:street "varchar(127)"]
@@ -93,12 +98,13 @@
                         [:plant "varchar(127)" "comment 'lookup'"] ;name of the power plant
                         [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
                         [:date "date"]
-                        [:num "integer"]) 
-      ))
-#_(defn create-dates-helper-table []
-  (sql/with-connection @conn
-      (sql/create-table :dates [:date "date"])))
+                        [:num "integer"])
+      (sql/create-table :structure
+                        [:clj "text"]
+                        :table-spec "engine = 'MyIsam'")))
+
 ;;;;;;;;;;;;;;;;;; infobright import functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn import-into-infobright* [table & data-csv-files]
   (sql/with-connection 
     @conn
@@ -141,6 +147,14 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
              (assoc % %2 0)) 
           r keys)))
 
+(defn- fix-string-encoding 
+  "The database uses latin1 encoding, but there are values that were originally in utf8.
+Within the database there are now two byte characters for umlauts etc. This functions
+fixes those strings after being fetched via jdbc."
+  [s]
+  (if (string? s)
+    (String. (.getBytes s "latin1"))
+    s))
 ;;;;;;;;; series meta data ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defquery count-all-series-of-plant "Count all time series where the name of the plant is the given parameter"
@@ -149,8 +163,10 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
 
 (defquery all-series-names-of-plant "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
 to display name."
-  "select name, identification from series where plant=?;"
-  (reduce merge (map (comp (partial apply hash-map) (juxt :identification :name)) res)))
+  "select name, identification,type from series where plant=?;"
+  (reduce merge (for [{:keys [identification type name]} res] 
+                  {(fix-string-encoding identification) 
+                   {:name (fix-string-encoding name) :type (fix-string-encoding type)}})))
 
 ;;;;;;;;; time series values ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
