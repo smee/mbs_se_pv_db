@@ -161,7 +161,7 @@ fixes those strings after being fetched via jdbc."
   "select count(*) as num from series where plant= ?;"
   (apply + (map :num res)))
 
-(defquery all-series-names-of-plant "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
+(defquery-cached all-series-names-of-plant 5 "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
 to display name."
   "select name, identification,type from series where plant=?;"
   (reduce merge (for [{:keys [identification type name]} res] 
@@ -243,3 +243,17 @@ to display name."
     (sql/with-connection @conn
        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
             (doall (map fix-time res))))))
+
+;;;;;;;;;;;;;; 
+(defn db-max-current-per-insolation [current-name insolation-name start end]
+    (let [sub-q "select name, timestamp, hour_of_day as hour, avg(value) as value, count(value) as count from series_data 
+                 where name=? and timestamp between ? and ?
+                   and hour_of_day>9 and hour_of_day<16 
+                 group by year, day_of_year, hour 
+                 order by year, day_of_year, hour"
+          query (str "select v.name as name, v.timestamp as timestamp, v.value/i.value as value, v.hour as hour from (" sub-q ") as v join (" sub-q") as i on i.timestamp=v.timestamp where i.count>58")
+          start (as-sql-timestamp start)
+          end (as-sql-timestamp end)]
+      (sql/with-connection @conn
+       (sql/with-query-results res [query current-name start end insolation-name start end] 
+         (doall (map fix-time res))))))
