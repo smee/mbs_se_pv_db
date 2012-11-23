@@ -99,7 +99,13 @@
                         [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
                         [:date "date"]
                         [:num "integer"])
-      (sql/create-table :structure
+      (sql/create-table :maintainance
+                        [:start "datetime"] 
+                        [:end "datetime"] 
+                        [:plant "varchar(127)"]
+                        [:reason "varchar(1000)"]
+                        :table-spec "engine = 'MyIsam'")
+      #_(sql/create-table :structure
                         [:clj "text"]
                         :table-spec "engine = 'MyIsam'")))
 
@@ -189,11 +195,11 @@ to display name."
 
 (def ^:private daily 
            "select sum(value) as value, maxima.t as time from
-              (select date(timestamp) as t, max(value) as value, name from series_data 
+              (select timestamp as t, max(value) as value, name from series_data 
                where name like 'INVU%/DAY_MMTR0%'
                      and plant=?
                      and timestamp>? and timestamp<? 
-               group by t, name) as maxima
+               group by name, year,day_of_year) as maxima
             group by maxima.t order by t")
 ;todo
 (defquery-cached sum-per-day 10 "Select sum of gains per day of a series in a time interval"
@@ -246,14 +252,27 @@ to display name."
 
 ;;;;;;;;;;;;;; 
 (defn db-max-current-per-insolation [current-name insolation-name start end]
-    (let [sub-q "select name, timestamp, hour_of_day as hour, avg(value) as value, count(value) as count from series_data 
+    (let [sub-q "select name, timestamp, hour_of_day as hour, avg(value) as value, stddev(value) as s, count(value) as count from series_data 
                  where name=? and timestamp between ? and ?
                    and hour_of_day>9 and hour_of_day<16 
                  group by year, day_of_year, hour 
                  order by year, day_of_year, hour"
-          query (str "select v.name as name, v.timestamp as timestamp, v.value/i.value as value, v.hour as hour from (" sub-q ") as v join (" sub-q") as i on i.timestamp=v.timestamp where i.count>58")
+          query (str "select v.name as name, v.timestamp as timestamp, v.value/i.value as value, v.hour as hour, v.s as std_val, i.s as std_ins from (" sub-q ") as v join (" sub-q") as i on i.timestamp=v.timestamp where i.count>58")
           start (as-sql-timestamp start)
           end (as-sql-timestamp end)]
       (sql/with-connection @conn
        (sql/with-query-results res [query current-name start end insolation-name start end] 
+         (doall (map fix-time res))))))
+(alter-var-root #'db-max-current-per-insolation cache/memo-lru 5)
+
+(defn db-current-per-insolation 
+  "TODO:Query takes too much time in the join" 
+  [current-name insolation-name start end]
+    (let [query (str "select name, timestamp, value from series_data 
+                      where name in (?,?) and timestamp between ? and ? and hour(timestamp)>9 and hour(timestamp)<16 
+                      order by timestamp")          
+          start (as-sql-timestamp start)
+          end (as-sql-timestamp end)]
+      (sql/with-connection @conn
+       (sql/with-query-results res [query current-name insolation-name start end] 
          (doall (map fix-time res))))))
