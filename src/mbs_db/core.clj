@@ -254,7 +254,7 @@ to display name."
 (defn db-max-current-per-insolation [current-name insolation-name start end]
     (let [sub-q "select name, timestamp, hour_of_day as hour, avg(value) as value, stddev(value) as s, count(value) as count from series_data 
                  where name=? and timestamp between ? and ?
-                   and hour_of_day>9 and hour_of_day<16 
+                   and hour_of_day>=9 and hour_of_day<=16 
                  group by year, day_of_year, hour 
                  order by year, day_of_year, hour"
           query (str "select v.name as name, v.timestamp as timestamp, v.value/i.value as value, v.hour as hour, v.s as std_val, i.s as std_ins from (" sub-q ") as v join (" sub-q") as i on i.timestamp=v.timestamp where i.count>58")
@@ -276,3 +276,7 @@ to display name."
       (sql/with-connection @conn
        (sql/with-query-results res [query current-name insolation-name start end] 
          (doall (map fix-time res))))))
+
+(defquery maintainance-intervals "Find all known time intervals where any maintainance works was done on a plant"
+  "select * from maintainance where plant=?"
+  (doall (map #(fix-time % :start :end) res)))
