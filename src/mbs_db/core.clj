@@ -105,7 +105,8 @@
                         [:plant "varchar(127)"]
                         [:reason "varchar(1000)"]
                         :table-spec "engine = 'MyIsam'")
-      #_(sql/create-table :structure
+      (sql/create-table :structure
+                        [:plant "varchar(127)"]
                         [:clj "text"]
                         :table-spec "engine = 'MyIsam'")))
 
@@ -280,3 +281,7 @@ to display name."
 (defquery maintainance-intervals "Find all known time intervals where any maintainance works was done on a plant"
   "select * from maintainance where plant=?"
   (doall (map #(fix-time % :start :end) res)))
+
+(defquery structure-of "Get the component structure of a plant"
+  "select clj from structure where plant=?"
+  (read-string (:clj (first res))))
