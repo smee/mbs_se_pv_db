@@ -252,9 +252,9 @@ to display name."
             (doall (map fix-time res))))))
 
 ;;;;;;;;;;;;;; 
-(defn db-max-current-per-insolation [current-name insolation-name start end]
+(defn db-max-current-per-insolation [plant current-name insolation-name start end]
     (let [sub-q "select name, timestamp, hour_of_day as hour, avg(value) as value, stddev(value) as s, count(value) as count from series_data 
-                 where name=? and timestamp between ? and ?
+                 where plant=? and name=? and timestamp between ? and ?
                    and hour_of_day>=9 and hour_of_day<=16 
                  group by year, day_of_year, hour 
                  order by year, day_of_year, hour"
@@ -262,7 +262,7 @@ to display name."
           start (as-sql-timestamp start)
           end (as-sql-timestamp end)]
       (sql/with-connection @conn
-       (sql/with-query-results res [query current-name start end insolation-name start end] 
+       (sql/with-query-results res [query plant current-name start end plant insolation-name start end] 
          (doall (map fix-time res))))))
 (alter-var-root #'db-max-current-per-insolation cache/memo-lru 5)
 
