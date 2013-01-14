@@ -158,7 +158,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   "The database uses latin1 encoding, but there are values that were originally in utf8.
 Within the database there are now two byte characters for umlauts etc. This functions
 fixes those strings after being fetched via jdbc."
-  [s]
+  [^String s]
   (if (string? s)
     (String. (.getBytes s "latin1"))
     s))
