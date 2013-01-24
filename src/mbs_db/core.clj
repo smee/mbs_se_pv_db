@@ -13,52 +13,58 @@
                            :subprotocol "mysql"
                            :user        "root"
                            :password     ""
-                           :subname      "//localhost:5029/siemens"})
+                           :subname      "//localhost:5029/siemens"
+                           :connection-name "default-db"})
 
 (def mysql-config-siemens (assoc mysql-config-default 
                                  :subname "//localhost:5029/siemens"
-                                 :password (get (System/getenv) "eumdb01_password") ))
+                                 :password (get (System/getenv) "eumdb01_password")
+                                 :connection-name "siemens-db"))
 
-(def mysql-config-psm (assoc mysql-config-default :subname "//localhost:5029/psm"))
+(def mysql-config-psm (assoc mysql-config-default :subname "//localhost:5029/psm" :connection-name "psm-db"))
 
 (defn- connection-pool
-  [spec]
-  (let [cpds (doto (ComboPooledDataSource.)
+  [{:keys [subname classname subprotocol user password connection-name]}]
+  (let [cpds (doto (ComboPooledDataSource. (or connection-name (str (java.util.UUID/randomUUID))))
                #_(.setProperties (doto (java.util.Properties.)
                                  (.setProperty "characterEncoding" "latin1")
                                  (.setProperty "useUnicode", "true")
                                  (.setProperty "characterSetResults", "ISO8859_1")))
-               (.setDriverClass (:classname spec)) 
-               (.setJdbcUrl (str "jdbc:" (:subprotocol spec) ":" (:subname spec)))
-               (.setUser (:user spec))
-               (.setPassword (:password spec))
+               (.setDriverClass classname) 
+               (.setJdbcUrl (str "jdbc:" subprotocol ":" subname))
+               (.setUser user)
+               (.setPassword password)
                ;; expire excess connections after 30 minutes of inactivity:
                (.setMaxIdleTimeExcessConnections (* 1 60))
                ;; expire connections after 3 hours of inactivity:
                (.setMaxIdleTime (* 3 60 60)))] 
     {:datasource cpds}))
 
-(defonce ^{:doc "map of current database connection settings"} current-db-settings (atom mysql-config-psm))
-(defonce ^{:private true :doc "connection pool to be used with `with-connection`"} conn (delay (connection-pool mysql-config-psm)))
+(defonce ^{:doc "map of current database connection settings"} current-db-settings (atom nil))
+(defonce ^{:private true :dynamic true :doc "connection pool to be used with `with-connection`"} conn (atom {:datasource nil}))
+
+(defn- get-connection []
+  @conn)
 
 (defn use-db-settings [settings]
-  (let [{:keys [user password subname subprotocol]} (merge mysql-config-psm settings)]
+  (let [settings (merge mysql-config-psm settings)]
     (println "[db] using new database settings: " settings)
     (reset! current-db-settings settings)
-    (doto (:datasource @conn)
-      (.setJdbcUrl (str "jdbc:" subprotocol ":" subname))
-      (.setUser user)
-      (.setPassword password))))
+    (reset! conn (connection-pool settings))))
+
+(defmacro with-db [connection-name & body]
+  `(binding [conn (atom {:datasource (com.mchange.v2.c3p0.C3P0Registry/pooledDataSourceByName ~connection-name)})]
+     ~@body))
 
 (defn connection-status []
-  (let [c (:datasource @conn)] 
+  (let [c (:datasource (get-connection))] 
     {:num-connections      (.getNumConnectionsDefaultUser c)
      :num-busy-connections (.getNumBusyConnectionsDefaultUser c)
      :num-idle-connections (.getNumIdleConnectionsDefaultUser c)}))
 
 ;;;;;;;;;;;;;;;;;;;; tables definitions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn create-tables-siemens []
-  (sql/with-connection @conn
+  (sql/with-connection (get-connection)
       (sql/create-table :series_data
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
@@ -108,13 +114,17 @@
       (sql/create-table :structure
                         [:plant "varchar(127)"]
                         [:clj "text"]
-                        :table-spec "engine = 'MyIsam'")))
+                        :table-spec "engine = 'MyIsam'")
+      (sql/create-table :imported
+                        [:id "varchar(127)"]
+                        [:plant "varchar(255)" "comment 'lookup'"]
+                        [:timestamp "timestamp" "default 0"])))
 
 ;;;;;;;;;;;;;;;;;; infobright import functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn import-into-infobright* [table & data-csv-files]
   (sql/with-connection 
-    @conn
+    (get-connection)
     (apply sql/do-commands 
       "set @bh_dataformat = 'txt_variable'"
       (for [file data-csv-files] 
@@ -125,9 +135,13 @@
 
 
 ;;;;;;;;;;;;;;;;; query helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(defn adhoc [query & params]
-  (sql/with-connection @conn
+(defn adhoc "Adhoc query, for development" [query & params]
+  (sql/with-connection (get-connection)
        (sql/with-query-results res (apply vector query params) (doall (for [r res] r)))))
+
+(defn do! "Run adhoc commands, like drop, create table, etc." [cmd]
+  (sql/with-connection (get-connection)
+    (sql/do-commands cmd))) 
 
 (defmacro defquery 
   "Create an sql query that accepts a variable number of paramters and a body that handles the 
@@ -135,7 +149,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
   [name doc-string query & body]
   `(defn ~name ~doc-string [& params#]
      (sql/with-connection 
-         @conn 
+         (get-connection) 
          (sql/with-query-results 
            ~'res (reduce conj [~query] params#) 
            ;; let user handle the results
@@ -226,7 +240,7 @@ to display name."
                 (apply str "select * from plant where name=?" (repeat (dec (count names)) " or name=?"))
                 "select * from plant")] 
     ; TODO need real metadata, number of inverters etc.
-    (sql/with-connection @conn 
+    (sql/with-connection (get-connection) 
        (sql/with-query-results res (reduce conj [query] names)
             (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 1000000) res))))))
 (alter-var-root #'get-metadata cache/memo-lru 100)
@@ -247,7 +261,7 @@ to display name."
         query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
                from series_data 
                where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?"]
-    (sql/with-connection @conn
+    (sql/with-connection (get-connection)
        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
             (doall (map fix-time res))))))
 
@@ -261,7 +275,7 @@ to display name."
           query (str "select v.name as name, v.timestamp as timestamp, v.value/i.value as value, v.hour as hour, v.s as std_val, i.s as std_ins from (" sub-q ") as v join (" sub-q") as i on i.timestamp=v.timestamp where i.count>58")
           start (as-sql-timestamp start)
           end (as-sql-timestamp end)]
-      (sql/with-connection @conn
+      (sql/with-connection (get-connection)
        (sql/with-query-results res [query plant current-name start end plant insolation-name start end] 
          (doall (map fix-time res))))))
 (alter-var-root #'db-max-current-per-insolation cache/memo-lru 5)
@@ -274,7 +288,7 @@ to display name."
                       order by timestamp")          
           start (as-sql-timestamp start)
           end (as-sql-timestamp end)]
-      (sql/with-connection @conn
+      (sql/with-connection (get-connection)
        (sql/with-query-results res [query current-name insolation-name start end] 
          (doall (map fix-time res))))))
 
@@ -285,3 +299,8 @@ to display name."
 (defquery structure-of "Get the component structure of a plant"
   "select clj from structure where plant=?"
   (read-string (:clj (first res))))
+
+(defquery series-imported? "Find the date where a data set was imported, identified by a unique id."
+  "select timestamp from imported where plant=? and id=?"
+  (when (seq res)
+    (fix-time (first res) :timestamp)))
