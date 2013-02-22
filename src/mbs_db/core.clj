@@ -11,19 +11,18 @@
 ;;;;;;;;;;;;;;;;;;;; connections ;;;;;;;;;;;;;;;;;;;;;
 (def mysql-config-default {:classname   "com.mysql.jdbc.Driver"
                            :subprotocol "mysql"
-                           :user        "root"
-                           :password     ""
-                           :subname      "//localhost:5029/siemens"
-                           :connection-name "default-db"})
+                           :user        (get (System/getenv) "DBUSER" "root")
+                           :password     (get (System/getenv) "DBPW" "")
+                           :subname      "//localhost:5029/psm"
+                           :connection-name "default"})
 
 (def mysql-config-siemens (assoc mysql-config-default 
                                  :subname "//localhost:5029/siemens"
-                                 :password (get (System/getenv) "eumdb01_password")
                                  :connection-name "siemens-db"))
 
-(def mysql-config-psm (assoc mysql-config-default :subname "//localhost:5029/psm" :connection-name "psm-db"))
+(def mysql-config-psm (assoc mysql-config-default :connection-name "psm-db"))
 
-(defn- connection-pool
+(defn create-db-connection-pool
   [{:keys [subname classname subprotocol user password connection-name]}]
   (let [cpds (doto (ComboPooledDataSource. (or connection-name (str (java.util.UUID/randomUUID))))
                #_(.setProperties (doto (java.util.Properties.)
@@ -50,7 +49,7 @@
   (let [settings (merge mysql-config-psm settings)]
     (println "[db] using new database settings: " settings)
     (reset! current-db-settings settings)
-    (reset! conn (connection-pool settings))))
+    (reset! conn (create-db-connection-pool settings))))
 
 (defmacro with-db [connection-name & body]
   `(binding [conn (atom {:datasource (com.mchange.v2.c3p0.C3P0Registry/pooledDataSourceByName ~connection-name)})]
@@ -184,10 +183,12 @@ fixes those strings after being fetched via jdbc."
 
 (defquery-cached all-series-names-of-plant 5 "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
 to display name."
-  "select name, identification,type from series where plant=?;"
-  (reduce merge (for [{:keys [identification type name]} res] 
+  "select name, identification,type,component from series where plant=?;"
+  (reduce merge (for [{:keys [identification type name component]} res] 
                   {(fix-string-encoding identification) 
-                   {:name (fix-string-encoding name) :type (fix-string-encoding type)}})))
+                   {:name (fix-string-encoding name) 
+                    :type (fix-string-encoding type)
+                    :component (fix-string-encoding component)}})))
 
 ;;;;;;;;; time series values ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -195,15 +196,15 @@ to display name."
 ;  "select time, value from series_data where belongs=(select belongs from tsnames where name=?)  order by time"
 ;  (doall (map fix-time res)))
 
-(defquery-cached all-values-in-time-range 1 "Select all time series data points of a given plant and series id that are between two times."
+(defquery-cached all-values-in-time-range 100 "Select all time series data points of a given plant and series id that are between two times."
   "select timestamp, value from series_data where plant=? and name=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
 
-(defquery-cached all-all-values-in-time-range 1 "Select all time series data points of all series of a given plant that are between two times."
+(defquery all-all-values-in-time-range "Select all time series data points of all series of a given plant that are between two times."
   "select name,timestamp, value from series_data where plant=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
 
-(defquery-cached min-max-time-of 10000 "Select time of the oldest/newest data point of a time series."
+(defquery min-max-time-of "Select time of the oldest/newest data point of a time series."
   "select min(timestamp) as min, max(timestamp) as max from series_data where plant=? and name=?"
   (fix-time (first res) :min :max))
 
@@ -217,20 +218,20 @@ to display name."
                group by name, year,day_of_year) as maxima
             group by maxima.t order by t")
 ;todo
-(defquery-cached sum-per-day 10 "Select sum of gains per day of a series in a time interval"
+(defquery sum-per-day "Select sum of gains per day of a series in a time interval"
   daily
   (doall (map fix-time res)))
-(defquery-cached sum-per-week 10 "Select sum of gains per week of a series in a time interval"
+(defquery sum-per-week "Select sum of gains per week of a series in a time interval"
   (str "select sum(value) as value, time from (" daily ") as daily group by week(time)")
   (doall (map fix-time res)))
-(defquery-cached sum-per-month 10 "Select sum of gains per month of a series in a time interval"
+(defquery sum-per-month "Select sum of gains per month of a series in a time interval"
   (str "select sum(value) as value, time from (" daily ") as daily group by month(time)")
   (doall (map fix-time res)))
-(defquery-cached sum-per-year 10 "Select sum of gains per year of a series in a time interval"
+(defquery sum-per-year "Select sum of gains per year of a series in a time interval"
   (str "select sum(value) as value, time from (" daily ") as daily group by year(time)")
   (doall (map fix-time res)))
 
-(defquery-cached available-data 1 "select all dates for which there is any data."
+(defquery available-data "select all dates for which there is any data."
   "select date,sum(num) as num from series_summary where plant=? group by date order by date"
   (doall (map (fn [{d :date :as m}] (assoc m :date (as-unix-timestamp d))) res)))
 
@@ -242,7 +243,7 @@ to display name."
     ; TODO need real metadata, number of inverters etc.
     (sql/with-connection (get-connection) 
        (sql/with-query-results res (reduce conj [query] names)
-            (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 1000000) res))))))
+            (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 2150000) res))))))
 (alter-var-root #'get-metadata cache/memo-lru 100)
 
 ;;;;;;;; internal statistics ;;;;;;;;;;;;;;;;;;;;
@@ -260,7 +261,7 @@ to display name."
         interval-in-s (int (/ (- e s) num 1000)) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
         query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
                from series_data 
-               where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?"]
+               where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?"] ; TODO group by materialized columns (performance is better if grouped by a constant expression) and ?!=0 group by year, month, day_of_month, hour_of_day
     (sql/with-connection (get-connection)
        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
             (doall (map fix-time res))))))
