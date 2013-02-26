@@ -196,7 +196,7 @@ to display name."
 ;  "select time, value from series_data where belongs=(select belongs from tsnames where name=?)  order by time"
 ;  (doall (map fix-time res)))
 
-(defquery-cached all-values-in-time-range 100 "Select all time series data points of a given plant and series id that are between two times."
+(defquery all-values-in-time-range "Select all time series data points of a given plant and series id that are between two times."
   "select timestamp, value from series_data where plant=? and name=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
 
@@ -279,7 +279,7 @@ to display name."
       (sql/with-connection (get-connection)
        (sql/with-query-results res [query plant current-name start end plant insolation-name start end] 
          (doall (map fix-time res))))))
-(alter-var-root #'db-max-current-per-insolation cache/memo-lru 5)
+;(alter-var-root #'db-max-current-per-insolation cache/memo-ttl 5)
 
 (defn db-current-per-insolation 
   "TODO:Query takes too much time in the join" 
