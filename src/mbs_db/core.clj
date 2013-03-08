@@ -258,10 +258,12 @@ to display name."
   [plant name start end num]
   (let [s (as-unix-timestamp start) 
         e (as-unix-timestamp end)
-        interval-in-s (int (/ (- e s) num 1000)) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
+        num (max 1 num) 
+        interval-in-s (max 1 (int (/ (- e s) num 1000))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
         query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
                from series_data 
                where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?"] ; TODO group by materialized columns (performance is better if grouped by a constant expression) and ?!=0 group by year, month, day_of_month, hour_of_day
+    ;hour_of_day > 8 and hour_of_day < 17 and
     (sql/with-connection (get-connection)
        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
             (doall (map fix-time res))))))
