@@ -200,6 +200,44 @@ to display name."
   "select timestamp, value from series_data where plant=? and name=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
 
+(defn ratios-in-time-range [plant name1 name2 start end] 
+  (sql/with-connection (get-connection)
+    (sql/with-query-results res 
+      ["  select timestamp, value, name 
+            from series_data 
+           where plant=? and 
+                 (name=? or name=?) and 
+                 timestamp  between ? and ? 
+        order by timestamp, name" 
+       plant name1 name2 (as-sql-timestamp start) (as-sql-timestamp end)]
+      (def r-c (doall res))
+      (doall (map (fn [[a b]]
+                    (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
+                          {v2 :value} (if (= name2 (:name b)) b a)]
+                      {:timestamp (as-unix-timestamp ts) :value (if (zero? v2) 0 (/ v1 v2))})) 
+                  (partition 2 res))))))
+
+(defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
+  (let [s (as-unix-timestamp start) 
+        e (as-unix-timestamp end)
+        num (max 1 num) 
+        interval-in-s (max 1 (int (/ (- e s) num 1000)))] ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
+    (println interval-in-s)
+    (sql/with-connection (get-connection)
+      (sql/with-query-results res 
+        ["  select timestamp, name, avg(value) as value from series_data 
+             where plant=? and 
+                   (name=? or name=?) and 
+                   timestamp between ? and ? 
+          group by unix_timestamp(timestamp) div ?, name
+          order by timestamp, name" 
+         plant name1 name2 (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
+        (doall (map (fn [[a b]]
+                      (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
+                            {v2 :value} (if (= name2 (:name b)) b a)]
+                        {:timestamp (as-unix-timestamp ts) :value (if (zero? v2) 0 (/ v1 v2))})) 
+                    (partition 2 res)))))))
+
 (defquery all-all-values-in-time-range "Select all time series data points of all series of a given plant that are between two times."
   "select name,timestamp, value from series_data where plant=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
@@ -281,6 +319,7 @@ to display name."
       (sql/with-connection (get-connection)
        (sql/with-query-results res [query plant current-name start end plant insolation-name start end] 
          (doall (map fix-time res))))))
+
 ;(alter-var-root #'db-max-current-per-insolation cache/memo-ttl 5)
 
 (defn db-current-per-insolation 
