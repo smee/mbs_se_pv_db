@@ -185,10 +185,10 @@ fixes those strings after being fetched via jdbc."
 to display name."
   "select name, identification,type,component from series where plant=?;"
   (reduce merge (for [{:keys [identification type name component]} res] 
-                  {(fix-string-encoding identification) 
-                   {:name (fix-string-encoding name) 
-                    :type (fix-string-encoding type)
-                    :component (fix-string-encoding component)}})))
+                  {identification 
+                   {:name name 
+                    :type type
+                    :component component}})))
 
 ;;;;;;;;; time series values ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -200,7 +200,7 @@ to display name."
   "select timestamp, value from series_data where plant=? and name=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
 
-(defn ratios-in-time-range [plant name1 name2 start end] 
+(defn ratios-in-time-range [plant name1 name2 start end f] 
   (sql/with-connection (get-connection)
     (sql/with-query-results res 
       ["  select timestamp, value, name 
@@ -210,19 +210,18 @@ to display name."
                  timestamp  between ? and ? 
         order by timestamp, name" 
        plant name1 name2 (as-sql-timestamp start) (as-sql-timestamp end)]
-      (def r-c (doall res))
-      (doall (map (fn [[a b]]
-                    (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
-                          {v2 :value} (if (= name2 (:name b)) b a)]
-                      {:timestamp (as-unix-timestamp ts) :value (if (zero? v2) 0 (/ v1 v2))})) 
-                  (partition 2 res))))))
+      (let [vs (map (fn [[a b]]
+                      (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
+                            {v2 :value} (if (= name2 (:name b)) b a)]
+                        {:timestamp (as-unix-timestamp ts) :value (if (zero? v2) 0 (/ v1 v2))})) 
+                    (partition 2 res))]
+        (f vs)))))
 
 (defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
   (let [s (as-unix-timestamp start) 
         e (as-unix-timestamp end)
         num (max 1 num) 
         interval-in-s (max 1 (int (/ (- e s) num 1000)))] ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
-    (println interval-in-s)
     (sql/with-connection (get-connection)
       (sql/with-query-results res 
         ["  select timestamp, name, avg(value) as value from series_data 
