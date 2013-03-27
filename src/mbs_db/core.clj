@@ -62,9 +62,8 @@
      :num-idle-connections (.getNumIdleConnectionsDefaultUser c)}))
 
 ;;;;;;;;;;;;;;;;;;;; tables definitions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(defn create-tables-siemens []
-  (sql/with-connection (get-connection)
-      (sql/create-table :series_data
+(defn- create-time-series-tables []
+  (sql/create-table :series_data
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:value "double"] 
@@ -103,21 +102,35 @@
                         [:plant "varchar(127)" "comment 'lookup'"] ;name of the power plant
                         [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
                         [:date "date"]
-                        [:num "integer"])
-      (sql/create-table :maintainance
+                        [:num "integer"]))
+
+(defn create-tables []
+  (sql/with-connection (get-connection)
+      #_(create-time-series-tables)
+      ; mutable tables
+      #_(sql/create-table :maintainance
                         [:start "datetime"] 
                         [:end "datetime"] 
                         [:plant "varchar(127)"]
                         [:reason "varchar(1000)"]
                         :table-spec "engine = 'MyIsam'")
-      (sql/create-table :structure
+      #_(sql/create-table :structure
                         [:plant "varchar(127)"]
                         [:clj "text"]
                         :table-spec "engine = 'MyIsam'")
-      (sql/create-table :imported
-                        [:id "varchar(127)"]
-                        [:plant "varchar(255)" "comment 'lookup'"]
-                        [:timestamp "timestamp" "default 0"])))
+      ; scenarios of time series that should be compared daily
+      ; via relative entropy
+      (sql/create-table :analysisscenario 
+                        [:plant "varchar(127)"]
+                        [:id :int "PRIMARY KEY NOT NULL AUTO_INCREMENT"]
+                        [:settings :text]
+                        :table-spec "engine = 'MyIsam'")
+      (sql/create-table :analysis
+                        [:plant "varchar(255)"]
+                        [:scenario :int]
+                        [:date :date]                        
+                        [:entropies :text]
+                        :table-spec "engine = 'MyIsam'")))
 
 ;;;;;;;;;;;;;;;;;; infobright import functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -341,7 +354,57 @@ to display name."
   "select clj from structure where plant=?"
   (read-string (:clj (first res))))
 
-(defquery series-imported? "Find the date where a data set was imported, identified by a unique id."
-  "select timestamp from imported where plant=? and id=?"
-  (when (seq res)
-    (fix-time (first res) :timestamp)))
+;;;;;;;;;;;;;;; relative entropy comparison queries
+;(sql/create-table :analysisscenario 
+;                        [:plant "varchar(127)"]
+;                        [:id :int "PRIMARY KEY"]
+;                        [:settings :text]
+;                        :table-spec "engine = 'MyIsam'")
+;      (sql/create-table :analysis
+;                        [:plant "varchar(255)"]
+;                        [:scenario :int]
+;                        [:date :date]                        
+;                        [:entropies :text]
+;                        :table-spec "engine = 'MyIsam'")
+(defquery get-scenarios ""
+  "select settings from analysisscenario where plant=?"
+  (doall (map (comp read-string :settings) res)))
+
+(defn get-scenario-id "" [plant settings] 
+  (binding [*print-length* nil
+            *print-level* nil]
+    (let [settings (pr-str settings)]
+      
+  (sql/with-connection (get-connection) 
+    (sql/with-query-results res ["select id from analysisscenario where plant=? and settings=?" plant settings] 
+      (-> res first :id))))))
+
+(defn insert-scenario "" [plant settings]
+  (binding [*print-length* nil
+            *print-level* nil]
+    (sql/with-connection (get-connection)
+      (sql/insert-record :analysisscenario {:plant plant :settings (pr-str settings)}))))
+
+(defn insert-entropy-comparison [plant date settings entropies]
+  (binding [*print-length* nil
+            *print-level* nil]
+    (let [date (as-sql-timestamp date) 
+            e (pr-str entropies)
+            sid (get-scenario-id plant settings)]
+        (sql/with-connection (get-connection)
+          (sql/insert-record :analysis {:plant plant :date date :entropies e :scenario sid})))))
+
+(defn get-entropies "Get entropies for a comparison scenario." [plant s e settings]
+  (let [s (as-sql-timestamp s) 
+        e (as-sql-timestamp e)
+        sid (get-scenario-id plant settings)]
+    (sql/with-connection (get-connection)
+      (sql/with-query-results res 
+        ["select entropies 
+              from analysis
+             where date >= ? and date <= ?
+                   and scenario=?
+          order by date"
+         s e sid]
+        (doall (map (comp read-string :entropies) res))))))
+
