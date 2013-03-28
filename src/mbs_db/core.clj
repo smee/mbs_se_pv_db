@@ -123,13 +123,14 @@
       (sql/create-table :analysisscenario 
                         [:plant "varchar(127)"]
                         [:id :int "PRIMARY KEY NOT NULL AUTO_INCREMENT"]
+                        [:name "varchar(500)"]
                         [:settings :text]
                         :table-spec "engine = 'MyIsam'")
       (sql/create-table :analysis
                         [:plant "varchar(255)"]
                         [:scenario :int]
                         [:date :date]                        
-                        [:entropies :text]
+                        [:result :text]
                         :table-spec "engine = 'MyIsam'")))
 
 ;;;;;;;;;;;;;;;;;; infobright import functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -357,54 +358,53 @@ to display name."
 ;;;;;;;;;;;;;;; relative entropy comparison queries
 ;(sql/create-table :analysisscenario 
 ;                        [:plant "varchar(127)"]
-;                        [:id :int "PRIMARY KEY"]
+;                        [:id :int "PRIMARY KEY NOT NULL AUTO_INCREMENT"]
+;                        [:name "varchar(500)"]
 ;                        [:settings :text]
 ;                        :table-spec "engine = 'MyIsam'")
 ;      (sql/create-table :analysis
 ;                        [:plant "varchar(255)"]
 ;                        [:scenario :int]
 ;                        [:date :date]                        
-;                        [:entropies :text]
+;                        [:result :text]
 ;                        :table-spec "engine = 'MyIsam'")
 (defquery get-scenarios ""
-  "select settings from analysisscenario where plant=?"
-  (doall (map (comp read-string :settings) res)))
+  "select name, settings from analysisscenario where plant=?"
+  (doall (map #(update-in % [:settings] read-string) res)))
 
 (defn get-scenario-id "" [plant settings] 
   (binding [*print-length* nil
             *print-level* nil]
-    (let [settings (pr-str settings)]
-      
+    (let [settings (pr-str settings)]      
   (sql/with-connection (get-connection) 
     (sql/with-query-results res ["select id from analysisscenario where plant=? and settings=?" plant settings] 
       (-> res first :id))))))
 
-(defn insert-scenario "" [plant settings]
+(defn insert-scenario "" [plant name settings]
   (binding [*print-length* nil
             *print-level* nil]
     (sql/with-connection (get-connection)
-      (sql/insert-record :analysisscenario {:plant plant :settings (pr-str settings)}))))
+      (sql/insert-record :analysisscenario {:plant plant :settings (pr-str settings) :name name}))))
 
-(defn insert-entropy-comparison [plant date settings entropies]
+(defn insert-scenario-result [plant date analysis-id result]
   (binding [*print-length* nil
             *print-level* nil]
     (let [date (as-sql-timestamp date) 
-            e (pr-str entropies)
-            sid (get-scenario-id plant settings)]
+            e (pr-str result)]
         (sql/with-connection (get-connection)
-          (sql/insert-record :analysis {:plant plant :date date :entropies e :scenario sid})))))
+          (sql/insert-record :analysis {:plant plant :date date :result e :scenario analysis-id})))))
 
-(defn get-entropies "Get entropies for a comparison scenario." [plant s e settings]
+(defn get-analysis-results "Get results for an analysis scenario." [plant s e analysis-id]
   (let [s (as-sql-timestamp s) 
-        e (as-sql-timestamp e)
-        sid (get-scenario-id plant settings)]
+        e (as-sql-timestamp e)]
     (sql/with-connection (get-connection)
       (sql/with-query-results res 
-        ["select entropies 
+        ["select result 
               from analysis
-             where date >= ? and date <= ?
-                   and scenario=?
+             where plant=? and 
+                   date >= ? and date <= ? and 
+                   scenario=?
           order by date"
-         s e sid]
-        (doall (map (comp read-string :entropies) res))))))
+         plant s e analysis-id]
+        (doall (map (comp read-string :result) res))))))
 
