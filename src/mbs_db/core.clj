@@ -1,5 +1,6 @@
 (ns mbs-db.core
-  (:use 
+  (:use
+    [clojure.string :only [join]] 
     [org.clojars.smee 
      [map :only (map-values)]
      [time :only (as-unix-timestamp as-sql-timestamp)]])
@@ -14,23 +15,29 @@
                            :user        (get (System/getenv) "DBUSER" "root")
                            :password     (get (System/getenv) "DBPW" "")
                            :subname      "//localhost:5029/psm"
-                           :connection-name "default"})
+                           :connection-name "default"
+                           :parameters {}})
 
 (def mysql-config-siemens (assoc mysql-config-default 
                                  :subname "//localhost:5029/siemens"
                                  :connection-name "siemens-db"))
 
-(def mysql-config-psm (assoc mysql-config-default :connection-name "psm-db"))
+(def mysql-config-psm (assoc mysql-config-default 
+                             :connection-name "psm-db" 
+                             :parameters {"useCursorFetch" true "defaultFetchSize" 100000}))
 
 (defn create-db-connection-pool
-  [{:keys [subname classname subprotocol user password connection-name]}]
-  (let [cpds (doto (ComboPooledDataSource. (or connection-name (str (java.util.UUID/randomUUID))))
+  [{:keys [subname classname subprotocol user password connection-name parameters]}]
+  (let [params (map (fn [[k v]] (str k "=" v)) parameters)
+        params (if (empty? parameters) "" (apply str "?" (join "&" params)))
+        url (str "jdbc:" subprotocol ":" subname params)
+        cpds (doto (ComboPooledDataSource. (or connection-name (str (java.util.UUID/randomUUID))))
                #_(.setProperties (doto (java.util.Properties.)
                                  (.setProperty "characterEncoding" "latin1")
                                  (.setProperty "useUnicode", "true")
                                  (.setProperty "characterSetResults", "ISO8859_1")))
                (.setDriverClass classname) 
-               (.setJdbcUrl (str "jdbc:" subprotocol ":" subname))
+               (.setJdbcUrl url)
                (.setUser user)
                (.setPassword password)
                ;; expire excess connections after 30 minutes of inactivity:
