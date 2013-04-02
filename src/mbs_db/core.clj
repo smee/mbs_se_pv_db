@@ -376,7 +376,7 @@ to display name."
 ;                        [:result :text]
 ;                        :table-spec "engine = 'MyIsam'")
 (defquery get-scenarios ""
-  "select name, settings from analysisscenario where plant=?"
+  "select * from analysisscenario where plant=?"
   (doall (map #(update-in % [:settings] read-string) res)))
 
 (defn get-scenario-id "" [plant settings] 
