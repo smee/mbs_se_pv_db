@@ -238,6 +238,17 @@ to display name."
                     (partition 2 res))]
         (f vs)))))
 
+(defn all-ratios-in-time-range [plant names start end f] 
+  (let [n (count names)
+        names-q (str "(" (join " or " (repeat n "name=?")) ")")
+        query (str "select timestamp, value, name 
+                      from series_data 
+                     where plant=? and timestamp  between ? and ? and " 
+                   names-q " order by timestamp, name")] 
+    (sql/with-connection (get-connection)
+      (sql/with-query-results res (apply vector query plant (as-sql-timestamp start) (as-sql-timestamp end) names)
+        (f (partition n (map fix-time res)))))))
+
 (defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
   (let [s (as-unix-timestamp start) 
         e (as-unix-timestamp end)
@@ -386,6 +397,10 @@ to display name."
   (sql/with-connection (get-connection) 
     (sql/with-query-results res ["select id from analysisscenario where plant=? and settings=?" plant settings] 
       (-> res first :id))))))
+
+(defquery get-scenario ""
+  "select * from analysisscenario where id=?"
+  (-> res first fix-time (update-in [:settings] read-string)))
 
 (defn insert-scenario "" [plant name settings]
   (binding [*print-length* nil
