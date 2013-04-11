@@ -113,15 +113,15 @@
 
 (defn create-tables []
   (sql/with-connection (get-connection)
-      #_(create-time-series-tables)
+      (create-time-series-tables)
       ; mutable tables
-      #_(sql/create-table :maintainance
+      (sql/create-table :maintainance
                         [:start "datetime"] 
                         [:end "datetime"] 
                         [:plant "varchar(127)"]
                         [:reason "varchar(1000)"]
                         :table-spec "engine = 'MyIsam'")
-      #_(sql/create-table :structure
+      (sql/create-table :structure
                         [:plant "varchar(127)"]
                         [:clj "text"]
                         :table-spec "engine = 'MyIsam'")
@@ -281,7 +281,7 @@ to display name."
 (def ^:private daily 
            "select sum(value) as value, maxima.t as time from
               (select timestamp as t, max(value) as value, name from series_data 
-               where name like 'INVU%/DAY_MMTR0%'
+               where name like 'INVU%/DAY_MMTR0%' or name like 'WR%/MMTR%'
                      and plant=?
                      and timestamp>? and timestamp<? 
                group by name, year,day_of_year) as maxima
@@ -371,7 +371,9 @@ to display name."
 
 (defquery structure-of "Get the component structure of a plant"
   "select clj from structure where plant=?"
-  (read-string (:clj (first res))))
+  (if (:clj (first res)) 
+    (read-string (:clj (first res)))
+    {}))
 
 ;;;;;;;;;;;;;;; relative entropy comparison queries
 ;(sql/create-table :analysisscenario 
