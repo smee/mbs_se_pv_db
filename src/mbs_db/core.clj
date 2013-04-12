@@ -281,7 +281,7 @@ to display name."
 (def ^:private daily 
            "select sum(value) as value, maxima.t as time from
               (select timestamp as t, max(value) as value, name from series_data 
-               where name like 'INVU%/DAY_MMTR0%' or name like 'WR%/MMTR%'
+               where (name like 'INVU%/DAY_MMTR0%' or name like 'WR%/MMTR%')
                      and plant=?
                      and timestamp>? and timestamp<? 
                group by name, year,day_of_year) as maxima
