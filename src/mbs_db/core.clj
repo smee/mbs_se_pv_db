@@ -403,6 +403,7 @@ to display name."
 (defquery get-scenario ""
   "select * from analysisscenario where id=?"
   (-> res first fix-time (update-in [:settings] read-string)))
+(alter-var-root #'get-scenario cache/memo-ttl (* 15 60 1000))
 
 (defn insert-scenario "" [plant name settings]
   (binding [*print-length* nil
@@ -431,4 +432,4 @@ to display name."
           order by date"
          plant s e analysis-id]
         (doall (map (comp read-string :result) res))))))
-
+(alter-var-root #'get-analysis-results cache/memo-ttl (* 15 60 1000))
