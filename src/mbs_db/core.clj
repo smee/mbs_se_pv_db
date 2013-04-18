@@ -88,14 +88,16 @@
                         [:street_number "varchar(127)"]
                         [:zipcode "varchar(127)"]
                         [:city "varchar(127)"]
-                        [:country"varchar(127)"])
+                        [:country"varchar(127)"]
+                        :table-spec "engine = 'MyIsam'")
       (sql/create-table :customer
                         [:name"varchar(127)"]
                         [:street "varchar(127)"]
                         [:street_number "varchar(127)"]
                         [:zipcode "varchar(127)"]
                         [:city "varchar(127)"]
-                        [:country"varchar(127)"]) 
+                        [:country"varchar(127)"]
+                        :table-spec "engine = 'MyIsam'") 
       (sql/create-table :series 
                         [:plant "varchar(127)"] ;name of the power plant
                         [:name "varchar(127)"] ;name of the series 
@@ -104,7 +106,8 @@
                         [:scale "varchar(127)"] ;???
                         [:component "varchar(127)"] ;name of the origin component
                         [:type "varchar(127)"] ;type of the series
-                        [:resolution "int"]) ;average time between two measures in milliseconds
+                        [:resolution "int"]
+                        :table-spec "engine = 'MyIsam'") ;average time between two measures in milliseconds
       (sql/create-table :series_summary
                         [:plant "varchar(127)" "comment 'lookup'"] ;name of the power plant
                         [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
