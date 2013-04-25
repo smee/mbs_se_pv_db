@@ -24,7 +24,8 @@
 
 (def mysql-config-psm (assoc mysql-config-default 
                              :connection-name "psm-db" 
-                             :parameters {"useCursorFetch" true "defaultFetchSize" 100000}))
+                             :parameters {"useCursorFetch" true "defaultFetchSize" 100000}
+                             ))
 
 (defn create-db-connection-pool
   [{:keys [subname classname subprotocol user password connection-name parameters]}]
@@ -237,7 +238,7 @@ to display name."
       (let [vs (map (fn [[a b]]
                       (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
                             {v2 :value} (if (= name2 (:name b)) b a)]
-                        {:timestamp (as-unix-timestamp ts) :value (if (zero? v2) 0 (/ v1 v2))})) 
+                        {:timestamp (as-unix-timestamp ts) :value (if (<= v2 1e-6) Double/NaN (/ v1 v2))})) 
                     (partition 2 res))]
         (f vs)))))
 
