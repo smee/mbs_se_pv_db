@@ -61,7 +61,11 @@
 
 (defmacro with-db [connection-name & body]
   `(binding [conn (atom {:datasource (com.mchange.v2.c3p0.C3P0Registry/pooledDataSourceByName ~connection-name)})]
-     ~@body))
+     (sql/with-connection (#'get-connection)
+       ~@body)))
+
+(defn connection-names []
+  (map (memfn getDataSourceName) (com.mchange.v2.c3p0.C3P0Registry/getPooledDataSources)))
 
 (defn connection-status []
   (let [c (:datasource (get-connection))] 
