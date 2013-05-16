@@ -247,15 +247,16 @@ to display name."
         (f vs)))))
 
 (defn all-ratios-in-time-range [plant names start end f] 
-  (let [n (count names)
+  (let [sort-order (into {} (map vector names (range (count names))))
+        n (count names)
         names-q (str "(" (join " or " (repeat n "name=?")) ")")
         query (str "select timestamp, value, name 
                       from series_data 
                      where plant=? and timestamp  between ? and ? and " 
-                   names-q " order by timestamp, name")] 
+                   names-q " order by timestamp, name")] ;FIXME sort the result in the same order as in names! 
     (sql/with-connection (get-connection)
       (sql/with-query-results res (apply vector query plant (as-sql-timestamp start) (as-sql-timestamp end) names)
-        (f (partition n (map fix-time res)))))))
+        (f (map (partial sort-by (comp sort-order :name)) (partition n (map fix-time res))))))))
 
 (defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
   (let [s (as-unix-timestamp start) 
