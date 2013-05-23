@@ -14,7 +14,7 @@
                            :subprotocol "mysql"
                            :user        (get (System/getenv) "DBUSER" "root")
                            :password     (get (System/getenv) "DBPW" "")
-                           :subname      "//localhost:5029/psm"
+                           :subname      "//localhost:5029/psm2"
                            :connection-name "default"
                            :parameters {}})
 
@@ -79,9 +79,8 @@
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:value "double"] 
-                        [:quality "int"] 
-                        [:flags "int"]
                         [:timestamp "timestamp" "default 0"] 
+                        [:unixtimestamp "bigint"] 
                         [:year "smallint"]
                         [:month "tinyint"]
                         [:day_of_year "smallint"]
@@ -111,8 +110,8 @@
                         [:scale "varchar(127)"] ;???
                         [:component "varchar(127)"] ;name of the origin component
                         [:type "varchar(127)"] ;type of the series
-                        [:resolution "int"]
-                        :table-spec "engine = 'MyIsam'") ;average time between two measures in milliseconds
+                        [:resolution "int"] ;average time between two measures in milliseconds
+                        :table-spec "engine = 'MyIsam'") 
       (sql/create-table :series_summary
                         [:plant "varchar(127)" "comment 'lookup'"] ;name of the power plant
                         [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
@@ -246,7 +245,7 @@ to display name."
                     (partition 2 res))]
         (f vs)))))
 
-(defn all-ratios-in-time-range [plant names start end f] 
+(defn all-values-in-time-range [plant names start end f] 
   (let [sort-order (into {} (map vector names (range (count names))))
         n (count names)
         names-q (str "(" (join " or " (repeat n "name=?")) ")")
@@ -269,7 +268,7 @@ to display name."
              where plant=? and 
                    (name=? or name=?) and 
                    timestamp between ? and ? 
-          group by unix_timestamp(timestamp) div ?, name
+          group by (unixtimestamp div ?), name
           order by timestamp, name" 
          plant name1 name2 (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
         (doall (map (fn [[a b]]
