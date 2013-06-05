@@ -224,10 +224,6 @@ to display name."
 ;  "select time, value from series_data where belongs=(select belongs from tsnames where name=?)  order by time"
 ;  (doall (map fix-time res)))
 
-(defquery all-values-in-time-range "Select all time series data points of a given plant and series id that are between two times."
-  "select timestamp, value from series_data where plant=? and name=? and timestamp >? and timestamp <?  order by timestamp"
-  (doall (map fix-time res)))
-
 (defn ratios-in-time-range [plant name1 name2 start end f] 
   (sql/with-connection (get-connection)
     (sql/with-query-results res 
@@ -332,18 +328,19 @@ to display name."
 
 (defn rolled-up-values-in-time-range 
   "Find min, max, and average of values aggregated into `num` time slots."
-  [plant name start end num]
-  (let [s (as-unix-timestamp start) 
-        e (as-unix-timestamp end)
-        num (max 1 num) 
-        interval-in-s (max 1 (int (/ (- e s) num 1000))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
-        query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
+  ([plant name start end] (rolled-up-values-in-time-range plant name start end java.lang.Long/MAX_VALUE))
+  ([plant name start end num]
+    (let [s (as-unix-timestamp start) 
+          e (as-unix-timestamp end)
+          num (max 1 num) 
+          interval-in-s (max 1 (int (/ (- e s) num 1000))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
+          query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
                from series_data 
-               where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?"] ; TODO group by materialized columns (performance is better if grouped by a constant expression) and ?!=0 group by year, month, day_of_month, hour_of_day
-    ;hour_of_day > 8 and hour_of_day < 17 and
-    (sql/with-connection (get-connection)
-       (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
-            (doall (map fix-time res))))))
+               where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?" ; TODO group by materialized columns (performance is better if grouped by a constant expression) and ?!=0 group by year, month, day_of_month, hour_of_day
+          ] 
+      (sql/with-connection (get-connection)
+        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
+          (doall (map fix-time res)))))))
 
 ;;;;;;;;;;;;;; 
 (defn db-max-current-per-insolation [plant current-name insolation-name start end]
