@@ -155,7 +155,7 @@
     (apply sql/do-commands 
       "set @bh_dataformat = 'txt_variable'"
       (for [file data-csv-files] 
-        (format "load data infile '%s' into table %s"  (.replaceAll (str file) "\\\\" "/") table)))))
+        (format "load data infile '%s' into table %s fields terminated by ';'"  (.replaceAll (str file) "\\\\" "/") table)))))
 
 (defn import-into-infobright [& data-csv-files]
   (apply import-into-infobright* "series_data" data-csv-files))
