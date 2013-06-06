@@ -255,9 +255,9 @@ to display name."
 
 (defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
   (let [s (as-unix-timestamp start) 
-        e (as-unix-timestamp end)
-        num (max 1 num) 
-        interval-in-s (max 1 (int (/ (- e s) num 1000)))] ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
+        e (as-unix-timestamp end) 
+        num (max 1 num)
+        interval-in-s (max 1 (int (/ (- e s) num)))] ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
     (sql/with-connection (get-connection)
       (sql/with-query-results res 
         ["  select timestamp, name, avg(value) as value from series_data 
@@ -333,10 +333,10 @@ to display name."
     (let [s (as-unix-timestamp start) 
           e (as-unix-timestamp end)
           num (max 1 num) 
-          interval-in-s (max 1 (int (/ (- e s) num 1000))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
+          interval-in-s (max 1 (int (/ (- e s) num))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
           query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
                from series_data 
-               where plant=? and name=? and timestamp between ? and ? group by unix_timestamp(timestamp) div ?" ; TODO group by materialized columns (performance is better if grouped by a constant expression) and ?!=0 group by year, month, day_of_month, hour_of_day
+               where plant=? and name=? and timestamp between ? and ? group by (unixtimestamp div ?)" ; TODO group by materialized columns (performance is better if grouped by a constant expression) and ?!=0 group by year, month, day_of_month, hour_of_day
           ] 
       (sql/with-connection (get-connection)
         (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
