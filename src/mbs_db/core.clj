@@ -93,6 +93,7 @@
                         [:zipcode "varchar(127)"]
                         [:city "varchar(127)"]
                         [:country"varchar(127)"]
+                        [:gain_series_name_template "varchar(127)"]
                         :table-spec "engine = 'MyIsam'")
       (sql/create-table :customer
                         [:name"varchar(127)"]
@@ -173,18 +174,19 @@
 (defmacro defquery 
   "Create an sql query that accepts a variable number of paramters and a body that handles the 
 sequence of results by manipulating the var 'res'. Handles name obfuscation transparently."
-  [name doc-string query & body]
-  `(defn ~name ~doc-string [& params#]
+  [name doc-string args query & body]
+  (assert (vector? args) "There must be a vector of query arguments for the prepared sql query!")
+  `(defn ~name ~doc-string [~@args]
      (sql/with-connection 
          (get-connection) 
          (sql/with-query-results 
-           ~'res (reduce conj [~query] params#) 
+           ~'res [~query ~@args] 
            ;; let user handle the results
            ~@body))))
 
-(defmacro defquery-cached [name num-to-cache doc-string query & body]
+(defmacro defquery-cached [name num-to-cache doc-string args query & body]
   `(do
-     (defquery ~name ~doc-string ~query ~@body)
+     (defquery ~name ~doc-string ~args ~query ~@body)
      (alter-var-root #'~name cache/memo-lru ~num-to-cache)))
 
 (defn- fix-time
@@ -206,12 +208,14 @@ fixes those strings after being fetched via jdbc."
 ;;;;;;;;; series meta data ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defquery count-all-series-of-plant "Count all time series where the name of the plant is the given parameter"
-  "select count(*) as num from series where plant= ?;"
+  [plant]
+  "select count(*) as num from series where plant= ?;"  
   (apply + (map :num res)))
 
 (defquery-cached all-series-names-of-plant 5 "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
 to display name."
-  "select name, identification,type,component from series where plant=?;"
+  [plant]
+  "select name, identification,type,component from series where plant=?;" 
   (reduce merge (for [{:keys [identification type name component]} res] 
                   {identification 
                    {:name name 
@@ -274,37 +278,51 @@ to display name."
                     (partition 2 res)))))))
 
 (defquery all-all-values-in-time-range "Select all time series data points of all series of a given plant that are between two times."
+  [plant start-time end-time]
   "select name,timestamp, value from series_data where plant=? and timestamp >? and timestamp <?  order by timestamp"
   (doall (map fix-time res)))
 
 (defquery min-max-time-of "Select time of the oldest/newest data point of a time series."
+  [plant series-name] 
   "select min(timestamp) as min, max(timestamp) as max from series_data where plant=? and name=?"
   (fix-time (first res) :min :max))
 
+;;;;;;;;;;; sums of park gains ;;;;;;;;;
+(def ^:private daily-template
+  "select sum(daily.mav-daily.miv) as value, daily.t as time from
+      (select name, timestamp as t,max(value) as mav, min(value) as miv from series_data
+        where plant=? and timestamp>? and timestamp<?
+              and name like ?
+      group by name, year,day_of_year) as daily
+      group by daily.t order by t") 
 
-(def ^:private daily 
-           "select sum(value) as value, maxima.t as time from
-              (select timestamp as t, max(value) as value, name from series_data 
-               where (name like 'INVU%/DAY_MMTR0%' or name like 'WR%/MMTR%')
-                     and plant=?
-                     and timestamp>? and timestamp<? 
-               group by name, year,day_of_year) as maxima
-            group by maxima.t order by t")
-;todo
-(defquery sum-per-day "Select sum of gains per day of a series in a time interval"
-  daily
-  (doall (map fix-time res)))
-(defquery sum-per-week "Select sum of gains per week of a series in a time interval"
-  (str "select sum(value) as value, time from (" daily ") as daily group by week(time)")
-  (doall (map fix-time res)))
-(defquery sum-per-month "Select sum of gains per month of a series in a time interval"
-  (str "select sum(value) as value, time from (" daily ") as daily group by month(time)")
-  (doall (map fix-time res)))
-(defquery sum-per-year "Select sum of gains per year of a series in a time interval"
-  (str "select sum(value) as value, time from (" daily ") as daily group by year(time)")
-  (doall (map fix-time res)))
+(defquery internal-find-gain-template ""
+  [plant]
+  "select gain_series_name_template as t from plant where name=?"
+  (-> res first :t))
+
+(defn sum-per "Select sum of gains per day of a series in a time interval"
+  [type plant start-time end-time] 
+  (let [template (internal-find-gain-template plant)
+        query (if (not= "day" type) 
+                (str "select sum(value) as value, time from (" daily-template ") as daily group by year(time), " type "(time)")
+                daily-template)]
+    (sql/with-connection (get-connection)
+      (sql/with-query-results res
+        [query plant start-time end-time template]
+        (doall (map #(fix-time % :time) res))))))
+
+(defn sum-per-day [plant start-time end-time]
+  (sum-per "day" plant start-time end-time))
+(defn sum-per-week [plant start-time end-time]
+  (sum-per "week" plant start-time end-time))
+(defn sum-per-month [plant start-time end-time]
+  (sum-per "month" plant start-time end-time))
+(defn sum-per-year [plant start-time end-time]
+  (sum-per "year" plant start-time end-time))
 
 (defquery available-data "select all dates for which there is any data."
+  [plant] 
   "select date,sum(num) as num from series_summary where plant=? group by date order by date"
   (doall (map (fn [{d :date :as m}] (assoc m :date (as-unix-timestamp d))) res)))
 
@@ -371,10 +389,12 @@ to display name."
          (doall (map fix-time res))))))
 
 (defquery maintainance-intervals "Find all known time intervals where any maintainance works was done on a plant"
+  [plant] 
   "select * from maintainance where plant=?"
   (doall (map #(fix-time % :start :end) res)))
 
 (defquery structure-of "Get the component structure of a plant"
+  [plant] 
   "select clj from structure where plant=?"
   (if (:clj (first res)) 
     (read-string (:clj (first res)))
@@ -394,6 +414,7 @@ to display name."
 ;                        [:result :text]
 ;                        :table-spec "engine = 'MyIsam'")
 (defquery get-scenarios ""
+  [plant] 
   "select * from analysisscenario where plant=?"
   (doall (map #(update-in % [:settings] read-string) res)))
 
@@ -406,6 +427,7 @@ to display name."
       (-> res first :id))))))
 
 (defquery get-scenario ""
+  [id]
   "select * from analysisscenario where id=?"
   (-> res first fix-time (update-in [:settings] read-string)))
 (alter-var-root #'get-scenario cache/memo-ttl (* 15 60 1000))
