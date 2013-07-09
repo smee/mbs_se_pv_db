@@ -43,6 +43,8 @@
                (.setPassword password)
                ;; expire excess connections after 30 minutes of inactivity:
                (.setMaxIdleTimeExcessConnections (* 1 60))
+               (.setMaxConnectionAge (* 1 60)) 
+               (.setIdleConnectionTestPeriod (* 1 30)) 
                ;; expire connections after 3 hours of inactivity:
                (.setMaxIdleTime (* 3 60 60)))] 
     {:datasource cpds}))
