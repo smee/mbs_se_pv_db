@@ -247,6 +247,9 @@ to display name."
                     (partition 2 res))]
         (f vs)))))
 
+(defn- simple-distinct [vs]
+  (map first (partition-by identity vs)))
+
 (defn all-values-in-time-range [plant names start end f] 
   (let [sort-order (into {} (map vector names (range (count names))))
         n (count names)
@@ -257,7 +260,7 @@ to display name."
                    names-q " order by timestamp, name")] ;FIXME sort the result in the same order as in names! 
     (sql/with-connection (get-connection)
       (sql/with-query-results res (apply vector query plant (as-sql-timestamp start) (as-sql-timestamp end) names)
-        (f (map (partial sort-by (comp sort-order :name)) (partition n (map fix-time res))))))))
+        (f (map (partial sort-by (comp sort-order :name)) (partition n (simple-distinct (map fix-time res)))))))))
 
 (defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
   (let [s (as-unix-timestamp start) 
