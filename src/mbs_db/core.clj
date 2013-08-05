@@ -2,7 +2,6 @@
   (:use
     [clojure.string :only [join]] 
     [org.clojars.smee 
-     [map :only (map-values)]
      [time :only (as-unix-timestamp as-sql-timestamp)]])
   (:require 
     [clojure.java.jdbc :as sql]
