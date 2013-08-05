@@ -189,7 +189,7 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
 (defmacro defquery-cached [name num-to-cache doc-string args query & body]
   `(do
      (defquery ~name ~doc-string ~args ~query ~@body)
-     (alter-var-root #'~name cache/memo-lru ~num-to-cache)))
+     (alter-var-root #'~name cache/lru :lru/threshold ~num-to-cache)))
 
 (defn- fix-time
   ([r] (fix-time r :timestamp))
@@ -230,6 +230,20 @@ to display name."
 ;  "select time, value from series_data where belongs=(select belongs from tsnames where name=?)  order by time"
 ;  (doall (map fix-time res)))
 
+(defn- skip-missing 
+  "There may be cases where a query assumes, that there are values for several time series for the same
+instance in time. If that should be not the case, we get a sequence of time series entries in `vs` where
+ `(not= (set (map :name vs)) (set names)))`. This function filters the sequence `vs` and drops all subsequences
+of `names`.
+For example see the tests."
+  [names vs] 
+  (let [n (count names)] 
+    (lazy-seq
+      (when (seq vs); (println (clojure.data/diff (vec names) (mapv :name (take n vs)))) 
+        (if (= names (map :name (take n vs)))
+          (concat (take n vs) (skip-missing names (drop n vs)))
+          (skip-missing names (next vs)))))))
+
 (defn ratios-in-time-range [plant name1 name2 start end f] 
   (sql/with-connection (get-connection)
     (sql/with-query-results res 
@@ -244,23 +258,27 @@ to display name."
                       (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
                             {v2 :value} (if (= name2 (:name b)) b a)]
                         {:timestamp (as-unix-timestamp ts) :value (if (<= v2 1e-6) Double/NaN (/ v1 v2))})) 
-                    (partition 2 res))]
+                    (partition 2 (skip-missing [name1 name2] res)))]
         (f vs)))))
 
-(defn- simple-distinct [vs]
-  (map first (partition-by identity vs)))
-
 (defn all-values-in-time-range [plant names start end f] 
+  ; FIXME there are cases where tru2 and invu2 DON'T have the same number of values per day!
   (let [sort-order (into {} (map vector names (range (count names))))
         n (count names)
         names-q (str "(" (join " or " (repeat n "name=?")) ")")
         query (str "select timestamp, value, name 
                       from series_data 
                      where plant=? and timestamp  between ? and ? and " 
-                   names-q " order by timestamp, name")] ;FIXME sort the result in the same order as in names! 
+                   names-q " order by timestamp, name")] 
     (sql/with-connection (get-connection)
       (sql/with-query-results res (apply vector query plant (as-sql-timestamp start) (as-sql-timestamp end) names)
-        (f (map (partial sort-by (comp sort-order :name)) (partition n (simple-distinct (map fix-time res)))))))))
+        (->> res
+          (map fix-time)
+          (partition-by :timestamp)
+          (map (partial sort-by (comp sort-order :name)))
+          (skip-missing names)
+          (partition n)
+          f)))))
 
 (defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
   (let [s (as-unix-timestamp start) 
@@ -280,7 +298,7 @@ to display name."
                       (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
                             {v2 :value} (if (= name2 (:name b)) b a)]
                         {:timestamp (as-unix-timestamp ts) :value (if (zero? v2) 0 (/ v1 v2))})) 
-                    (partition 2 res)))))))
+                    (partition 2 (skip-missing [name1 name2] res))))))))
 
 (defquery all-all-values-in-time-range "Select all time series data points of all series of a given plant that are between two times."
   [plant start-time end-time]
@@ -340,7 +358,7 @@ to display name."
     (sql/with-connection (get-connection) 
        (sql/with-query-results res (reduce conj [query] names)
             (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 2150000) res))))))
-(alter-var-root #'get-metadata cache/memo-lru 100)
+(alter-var-root #'get-metadata cache/lru :lru/threshold 100)
 
 ;;;;;;;; internal statistics ;;;;;;;;;;;;;;;;;;;;
 (defn data-base-statistics []
@@ -435,7 +453,7 @@ to display name."
   [id]
   "select * from analysisscenario where id=?"
   (-> res first fix-time (update-in [:settings] read-string)))
-(alter-var-root #'get-scenario cache/memo-ttl (* 15 60 1000))
+(alter-var-root #'get-scenario cache/ttl :ttl/threshold(* 15 60 1000))
 
 (defn insert-scenario "" [plant name settings]
   (binding [*print-length* nil
@@ -447,9 +465,9 @@ to display name."
   (binding [*print-length* nil
             *print-level* nil]
     (let [date (as-sql-timestamp date) 
-            e (pr-str result)]
-        (sql/with-connection (get-connection)
-          (sql/insert-record :analysis {:plant plant :date date :result e :scenario analysis-id})))))
+          e (pr-str result)]
+      (sql/with-connection (get-connection)
+        (sql/insert-record :analysis {:plant plant :date date :result e :scenario analysis-id})))))
 
 (defn get-analysis-results "Get results for an analysis scenario." [plant s e analysis-id]
   (let [s (as-sql-timestamp s) 
@@ -464,4 +482,4 @@ to display name."
           order by date"
          plant s e analysis-id]
         (doall (map (comp read-string :result) res))))))
-(alter-var-root #'get-analysis-results cache/memo-ttl (* 15 60 1000))
+;(alter-var-root #'get-analysis-results cache/memo-ttl (* 15 60 1000))
