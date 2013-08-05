@@ -238,7 +238,7 @@ For example see the tests."
   [names vs] 
   (let [n (count names)] 
     (lazy-seq
-      (when (seq vs); (println (clojure.data/diff (vec names) (mapv :name (take n vs)))) 
+      (when (seq vs) ;(println (clojure.data/diff (vec names) (mapv :name (take n vs)))) 
         (if (= names (map :name (take n vs)))
           (concat (take n vs) (skip-missing names (drop n vs)))
           (skip-missing names (next vs)))))))
@@ -275,6 +275,7 @@ For example see the tests."
           (map fix-time)
           (partition-by :timestamp)
           (map (partial sort-by (comp sort-order :name)))
+          (apply concat)
           (skip-missing names)
           (partition n)
           f)))))
