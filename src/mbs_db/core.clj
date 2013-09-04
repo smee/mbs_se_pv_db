@@ -216,12 +216,9 @@ fixes those strings after being fetched via jdbc."
 (defquery-cached all-series-names-of-plant 5 "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
 to display name."
   [plant]
-  "select name, identification,type,component from series where plant=?;" 
-  (reduce merge (for [{:keys [identification type name component]} res] 
-                  {identification 
-                   {:name name 
-                    :type type
-                    :component component}})))
+  "select * from series where plant=?;" 
+  (reduce merge (for [{:keys [identification] :as m} res] 
+                  {identification m})))
 
 ;;;;;;;;; time series values ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
