@@ -17,14 +17,9 @@
                            :connection-name "default"
                            :parameters {}})
 
-(def mysql-config-siemens (assoc mysql-config-default 
-                                 :subname "//localhost:5029/siemens"
-                                 :connection-name "siemens-db"))
-
 (def mysql-config-psm (assoc mysql-config-default 
                              :connection-name "psm-db" 
-                             :parameters {"useCursorFetch" true "defaultFetchSize" 100000}
-                             ))
+                             :parameters {"useCursorFetch" true "defaultFetchSize" 100000}))
 
 (defn create-db-connection-pool
   [{:keys [subname classname subprotocol user password connection-name parameters]}]
