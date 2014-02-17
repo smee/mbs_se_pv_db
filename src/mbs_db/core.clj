@@ -4,8 +4,7 @@
     [org.clojars.smee 
      [time :only (as-unix-timestamp as-sql-timestamp)]])
   (:require 
-    [clojure.java.jdbc :as sql]
-    [clojure.core.memoize :as cache])
+    [clojure.java.jdbc :as sql])
   (:import com.mchange.v2.c3p0.ComboPooledDataSource))
 
 ;;;;;;;;;;;;;;;;;;;; connections ;;;;;;;;;;;;;;;;;;;;;
@@ -180,11 +179,6 @@ sequence of results by manipulating the var 'res'. Handles name obfuscation tran
            ;; let user handle the results
            ~@body))))
 
-(defmacro defquery-cached [name num-to-cache doc-string args query & body]
-  `(do
-     (defquery ~name ~doc-string ~args ~query ~@body)
-     (alter-var-root #'~name cache/lru :lru/threshold ~num-to-cache)))
-
 (defn- fix-time
   ([r] (fix-time r :timestamp))
   ([r & keys]
@@ -208,7 +202,7 @@ fixes those strings after being fetched via jdbc."
   "select count(*) as num from series where plant= ?;"  
   (apply + (map :num res)))
 
-(defquery-cached all-series-names-of-plant 5 "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
+(defquery all-series-names-of-plant "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
 to display name."
   [plant]
   "select * from series where plant=?;" 
@@ -350,7 +344,6 @@ For example see the tests."
     (sql/with-connection (get-connection) 
        (sql/with-query-results res (reduce conj [query] names)
             (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 2150000) res))))))
-(alter-var-root #'get-metadata cache/lru :lru/threshold 100)
 
 ;;;;;;;; internal statistics ;;;;;;;;;;;;;;;;;;;;
 (defn data-base-statistics []
@@ -389,7 +382,6 @@ For example see the tests."
        (sql/with-query-results res [query plant current-name start end plant insolation-name start end] 
          (doall (map fix-time res))))))
 
-;(alter-var-root #'db-max-current-per-insolation cache/memo-ttl 5)
 
 (defn db-current-per-insolation 
   "TODO:Query takes too much time in the join" 
@@ -445,7 +437,7 @@ For example see the tests."
   [id]
   "select * from analysisscenario where id=?"
   (-> res first fix-time (update-in [:settings] read-string)))
-(alter-var-root #'get-scenario cache/ttl :ttl/threshold(* 15 60 1000))
+
 
 (defn insert-scenario "" [plant name settings]
   (binding [*print-length* nil
@@ -474,4 +466,3 @@ For example see the tests."
           order by date"
          plant s e analysis-id]
         (doall (map (comp read-string :result) res))))))
-;(alter-var-root #'get-analysis-results cache/memo-ttl (* 15 60 1000))
