@@ -228,35 +228,26 @@ For example see the tests."
         (if (= names (map :name (take n vs)))
           (concat (take n vs) (skip-missing names (drop n vs)))
           (skip-missing names (next vs)))))))
-
-(defn ratios-in-time-range [plant name1 name2 start end f] 
-  (sql/with-connection (get-connection)
-    (sql/with-query-results res 
-      ["  select timestamp, value, name 
-            from series_data 
-           where plant=? and 
-                 (name=? or name=?) and 
-                 timestamp  between ? and ? 
-        order by timestamp, name" 
-       plant name1 name2 (as-sql-timestamp start) (as-sql-timestamp end)]
-      (let [vs (map (fn [[a b]]
-                      (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
-                            {v2 :value} (if (= name2 (:name b)) b a)]
-                        {:timestamp (as-unix-timestamp ts) :value (if (<= v2 1e-6) Double/NaN (/ v1 v2))})) 
-                    (partition 2 (skip-missing [name1 name2] res)))]
-        (f vs)))))
-
-(defn all-values-in-time-range [plant names start end f] 
+(defn cnt [vs]
+  (do (println (count vs))
+    vs)) 
+(defn all-values-in-time-range [plant names start end num f] 
   ; FIXME there are cases where tru2 and invu2 DON'T have the same number of values per day!
   (let [sort-order (into {} (map vector names (range (count names))))
         n (count names)
+        num (max 1 (or num 1))
+        interval-in-s (max 1 (long (/ (- (as-unix-timestamp end) (as-unix-timestamp start)) num)))
         names-q (str "(" (join " or " (repeat n "name=?")) ")")
-        query (str "select timestamp, value, name 
-                      from series_data 
-                     where plant=? and timestamp  between ? and ? and " 
-                   names-q " order by timestamp, name")] 
+        query (str "select timestamp, value, name from series_data 
+                     where plant=? and 
+                           timestamp  between ? and ? and " 
+                   names-q 
+                   (if num " group by (unixtimestamp div ?),name" "")
+                   " order by timestamp, name")
+        query (apply vector query plant (as-sql-timestamp start) (as-sql-timestamp end) names)
+        query (if num (conj query interval-in-s) query)] 
     (sql/with-connection (get-connection)
-      (sql/with-query-results res (apply vector query plant (as-sql-timestamp start) (as-sql-timestamp end) names)
+      (sql/with-query-results res query 
         (->> res
           (map fix-time)
           (partition-by :timestamp)
@@ -266,30 +257,25 @@ For example see the tests."
           (partition n)
           f)))))
 
-(defn rolled-up-ratios-in-time-range [plant name1 name2 start end num] 
-  (let [s (as-unix-timestamp start) 
-        e (as-unix-timestamp end) 
-        num (max 1 num)
-        interval-in-s (max 1 (long (/ (- e s) num)))] ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
-    (sql/with-connection (get-connection)
-      (sql/with-query-results res 
-        ["  select timestamp, name, avg(value) as value from series_data 
-             where plant=? and 
-                   (name=? or name=?) and 
-                   timestamp between ? and ? 
-          group by (unixtimestamp div ?), name
-          order by timestamp, name" 
-         plant name1 name2 (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
-        (doall (map (fn [[a b]]
-                      (let [{ts :timestamp, v1 :value} (if (= name1 (:name a)) a b)
-                            {v2 :value} (if (= name2 (:name b)) b a)]
-                        {:timestamp (as-unix-timestamp ts) :value (if (zero? v2) 0 (/ v1 v2))})) 
-                    (partition 2 (skip-missing [name1 name2] res))))))))
+(defn rolled-up-values-in-time-range 
+  "Find min, max, and average of values aggregated into `num` time slots."
+  ([plant name start end] (rolled-up-values-in-time-range plant name start end java.lang.Long/MAX_VALUE))
+  ([plant name start end num]
+    (let [s (as-unix-timestamp start) 
+          e (as-unix-timestamp end)
+          num (max 1 num) 
+          interval-in-s (max 1 (long (/ (- e s) num))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
+          query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
+               from series_data 
+               where plant=? and 
+                     name=? and 
+                     timestamp between ? and ? 
+               group by (unixtimestamp div ?)" 
+          ] 
+      (sql/with-connection (get-connection)
+        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
+          (doall (map fix-time res)))))))
 
-(defquery all-all-values-in-time-range "Select all time series data points of all series of a given plant that are between two times."
-  [plant start-time end-time]
-  "select name,timestamp, value from series_data where plant=? and timestamp >? and timestamp <?  order by timestamp"
-  (doall (map fix-time res)))
 
 (defquery min-max-time-of "Select time of the oldest/newest data point of a time series."
   [plant series-name] 
@@ -352,24 +338,10 @@ For example see the tests."
   (adhoc "SHOW TABLE STATUS WHERE ENGINE='BRIGHTHOUSE'"))
 
 
-(defn rolled-up-values-in-time-range 
-  "Find min, max, and average of values aggregated into `num` time slots."
-  ([plant name start end] (rolled-up-values-in-time-range plant name start end java.lang.Long/MAX_VALUE))
-  ([plant name start end num]
-    (let [s (as-unix-timestamp start) 
-          e (as-unix-timestamp end)
-          num (max 1 num) 
-          interval-in-s (max 1 (long (/ (- e s) num))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
-          query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
-               from series_data 
-               where plant=? and name=? and timestamp between ? and ? group by (unixtimestamp div ?)" ; TODO group by materialized columns (performance is better if grouped by a constant expression) and ?!=0 group by year, month, day_of_month, hour_of_day
-          ] 
-      (sql/with-connection (get-connection)
-        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
-          (doall (map fix-time res)))))))
-
 ;;;;;;;;;;;;;; 
-(defn db-max-current-per-insolation [plant current-name insolation-name start end]
+(defn db-max-current-per-insolation 
+  "Currently used only for changepoint charts."
+  [plant current-name insolation-name start end]
     (let [sub-q "select name, timestamp, hour_of_day as hour, avg(value) as value, stddev(value) as s, count(value) as count from series_data 
                  where plant=? and name=? and timestamp between ? and ?
                    and hour_of_day>=9 and hour_of_day<=16 
@@ -382,18 +354,6 @@ For example see the tests."
        (sql/with-query-results res [query plant current-name start end plant insolation-name start end] 
          (doall (map fix-time res))))))
 
-
-(defn db-current-per-insolation 
-  "TODO:Query takes too much time in the join" 
-  [current-name insolation-name start end]
-    (let [query (str "select name, timestamp, value from series_data 
-                      where name in (?,?) and timestamp between ? and ? and hour(timestamp)>9 and hour(timestamp)<16 
-                      order by timestamp")          
-          start (as-sql-timestamp start)
-          end (as-sql-timestamp end)]
-      (sql/with-connection (get-connection)
-       (sql/with-query-results res [query current-name insolation-name start end] 
-         (doall (map fix-time res))))))
 
 (defquery maintainance-intervals "Find all known time intervals where any maintainance works was done on a plant"
   [plant] 
