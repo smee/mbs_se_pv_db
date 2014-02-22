@@ -228,14 +228,16 @@ For example see the tests."
         (if (= names (map :name (take n vs)))
           (concat (take n vs) (skip-missing names (drop n vs)))
           (skip-missing names (next vs)))))))
-(defn cnt [vs]
-  (do (println (count vs))
-    vs)) 
-(defn all-values-in-time-range [plant names start end num f] 
-  ; FIXME there are cases where tru2 and invu2 DON'T have the same number of values per day!
+
+(defn all-values-in-time-range 
+  "Fetches timestamps and values for a number of time series. If `num` is given, rolls up values into `num` different bins (returns averages).
+`f` is a function that gets fed the lazy sequence of responses from the database. Use it
+for long sequences that should not be realized fully into memory."
+  ([plant names start end num] (all-values-in-time-range plant names start end num doall))
+  ([plant names start end num f] 
   (let [sort-order (into {} (map vector names (range (count names))))
         n (count names)
-        num (max 1 (or num 1))
+        num (or num java.lang.Long/MAX_VALUE)
         interval-in-s (max 1 (long (/ (- (as-unix-timestamp end) (as-unix-timestamp start)) num)))
         names-q (str "(" (join " or " (repeat n "name=?")) ")")
         query (str "select timestamp, value, name from series_data 
@@ -255,7 +257,7 @@ For example see the tests."
           (apply concat)
           (skip-missing names)
           (partition n)
-          f)))))
+          f))))))
 
 (defn rolled-up-values-in-time-range 
   "Find min, max, and average of values aggregated into `num` time slots."
