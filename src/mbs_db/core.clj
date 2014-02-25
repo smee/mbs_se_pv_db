@@ -56,8 +56,10 @@
 
 (defmacro with-db [connection-name & body]
   `(binding [conn (atom {:datasource (com.mchange.v2.c3p0.C3P0Registry/pooledDataSourceByName ~connection-name)})]
-     (sql/with-connection (#'get-connection)
-       ~@body)))
+     ~@body))
+
+(defmacro q [& body]
+  `(sql/query (get-connection) ~@body))
 
 (defn connection-names []
   (map (memfn getDataSourceName) (com.mchange.v2.c3p0.C3P0Registry/getPooledDataSources)))
@@ -70,7 +72,7 @@
 
 ;;;;;;;;;;;;;;;;;;;; tables definitions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn- create-time-series-tables []
-  (sql/create-table :series_data
+  (sql/create-table-ddl :series_data
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:value "double"] 
@@ -81,7 +83,7 @@
                         [:day_of_year "smallint"]
                         [:day_of_month "tinyint"]
                         [:hour_of_day "tinyint"])
-      (sql/create-table :plant
+      (sql/create-table-ddl :plant
                         [:name"varchar(127)"]
                         [:street "varchar(127)"]
                         [:street_number "varchar(127)"]
@@ -90,7 +92,7 @@
                         [:country"varchar(127)"]
                         [:gain_series_name_template "varchar(127)"]
                         :table-spec "engine = 'MyIsam'")
-      (sql/create-table :customer
+      (sql/create-table-ddl :customer
                         [:name"varchar(127)"]
                         [:street "varchar(127)"]
                         [:street_number "varchar(127)"]
@@ -98,7 +100,7 @@
                         [:city "varchar(127)"]
                         [:country"varchar(127)"]
                         :table-spec "engine = 'MyIsam'") 
-      (sql/create-table :series 
+      (sql/create-table-ddl :series 
                         [:plant "varchar(127)"] ;name of the power plant
                         [:name "varchar(127)"] ;name of the series 
                         [:identification "varchar(127)"]; ???
@@ -108,35 +110,35 @@
                         [:type "varchar(127)"] ;type of the series
                         [:resolution "int"] ;average time between two measures in milliseconds
                         :table-spec "engine = 'MyIsam'") 
-      (sql/create-table :series_summary
+      (sql/create-table-ddl :series_summary
                         [:plant "varchar(127)" "comment 'lookup'"] ;name of the power plant
                         [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
                         [:date "date"]
                         [:num "integer"]))
 
 (defn create-tables []
-  (sql/with-connection (get-connection)
+  (sql/db-do-commands (get-connection)
       (create-time-series-tables)
       ; mutable tables
-      (sql/create-table :maintainance
+      (sql/create-table-ddl :maintainance
                         [:start "datetime"] 
                         [:end "datetime"] 
                         [:plant "varchar(127)"]
                         [:reason "varchar(1000)"]
                         :table-spec "engine = 'MyIsam'")
-      (sql/create-table :structure
+      (sql/create-table-ddl :structure
                         [:plant "varchar(127)"]
                         [:clj "text"]
                         :table-spec "engine = 'MyIsam'")
       ; scenarios of time series that should be compared daily
       ; via relative entropy
-      (sql/create-table :analysisscenario 
+      (sql/create-table-ddl :analysisscenario 
                         [:plant "varchar(127)"]
                         [:id :int "PRIMARY KEY NOT NULL AUTO_INCREMENT"]
                         [:name "varchar(500)"]
                         [:settings :text]
                         :table-spec "engine = 'MyIsam'")
-      (sql/create-table :analysis
+      (sql/create-table-ddl :analysis
                         [:plant "varchar(255)"]
                         [:scenario :int]
                         [:date :date]                        
@@ -146,12 +148,10 @@
 ;;;;;;;;;;;;;;;;;; infobright import functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn import-into-infobright* [table & data-csv-files]
-  (sql/with-connection 
-    (get-connection)
-    (apply sql/do-commands 
-      "set @bh_dataformat = 'txt_variable'"
-      (for [file data-csv-files] 
-        (format "load data infile '%s' into table %s fields terminated by ';'"  (.replaceAll (str file) "\\\\" "/") table)))))
+  (apply sql/db-do-commands (get-connection) 
+         "set @bh_dataformat = 'txt_variable'"
+         (for [file data-csv-files] 
+           (format "load data infile '%s' into table %s fields terminated by ';'"  (.replaceAll (str file) "\\\\" "/") table))))
 
 (defn import-into-infobright [& data-csv-files]
   (apply import-into-infobright* "series_data" data-csv-files))
@@ -159,25 +159,10 @@
 
 ;;;;;;;;;;;;;;;;; query helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn adhoc "Adhoc query, for development" [query & params]
-  (sql/with-connection (get-connection)
-       (sql/with-query-results res (apply vector query params) (doall (for [r res] r)))))
+  (q (apply vector query params)))
 
-(defn do! "Run adhoc commands, like drop, create table, etc." [cmd]
-  (sql/with-connection (get-connection)
-    (sql/do-commands cmd))) 
-
-(defmacro defquery 
-  "Create an sql query that accepts a variable number of paramters and a body that handles the 
-sequence of results by manipulating the var 'res'. Handles name obfuscation transparently."
-  [name doc-string args query & body]
-  (assert (vector? args) "There must be a vector of query arguments for the prepared sql query!")
-  `(defn ~name ~doc-string [~@args]
-     (sql/with-connection 
-         (get-connection) 
-         (sql/with-query-results 
-           ~'res [~query ~@args] 
-           ;; let user handle the results
-           ~@body))))
+(defn do! "Run adhoc commands, like drop, create table, etc." [& cmds]
+  (apply sql/db-do-commands (get-connection) cmds)) 
 
 (defn- fix-time
   ([r] (fix-time r :timestamp))
@@ -197,23 +182,22 @@ fixes those strings after being fetched via jdbc."
     s))
 ;;;;;;;;; series meta data ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defquery count-all-series-of-plant "Count all time series where the name of the plant is the given parameter"
+(defn count-all-series-of-plant 
+  "Count all time series where the name of the plant is the given parameter"
   [plant]
-  "select count(*) as num from series where plant= ?;"  
-  (apply + (map :num res)))
+  (q ["select count(*) as num from series where plant= ?" plant]
+     :result-set-fn #(apply + (map :num %))))
 
-(defquery all-series-names-of-plant "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
+(defn all-series-names-of-plant 
+  "Select all time series names with given plant name. Returns a map of identifier (for example IEC61850 name)
 to display name."
   [plant]
-  "select * from series where plant=?;" 
-  (reduce merge (for [{:keys [identification] :as m} res] 
-                  {identification m})))
+  (q ["select * from series where plant=?;" plant]
+             :row-fn (fn [m] {(:identification m) m})
+             :result-set-fn (partial reduce merge)))
 
 ;;;;;;;;; time series values ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;(defquery all-values-of "Select all time series data points of a given name."
-;  "select time, value from series_data where belongs=(select belongs from tsnames where name=?)  order by time"
-;  (doall (map fix-time res)))
 
 (defn- skip-missing 
   "There may be cases where a query assumes, that there are values for several time series for the same
@@ -224,7 +208,7 @@ For example see the tests."
   [names vs] 
   (let [n (count names)] 
     (lazy-seq
-      (when (seq vs) ;(println (clojure.data/diff (vec names) (mapv :name (take n vs)))) 
+      (when (seq vs) 
         (if (= names (map :name (take n vs)))
           (concat (take n vs) (skip-missing names (drop n vs)))
           (skip-missing names (next vs)))))))
@@ -240,24 +224,23 @@ for long sequences that should not be realized fully into memory."
         num (or num java.lang.Long/MAX_VALUE)
         interval-in-s (max 1 (long (/ (- (as-unix-timestamp end) (as-unix-timestamp start)) num)))
         names-q (str "(" (join " or " (repeat n "name=?")) ")")
-        query (str "select timestamp, value, name from series_data 
+        query (-> (str "select timestamp, value, name from series_data 
                      where plant=? and 
                            timestamp  between ? and ? and " 
                    names-q 
                    (if num " group by (unixtimestamp div ?),name" "")
-                   " order by timestamp, name")
+                   " order by timestamp, name"))
         query (apply vector query plant (as-sql-timestamp start) (as-sql-timestamp end) names)
         query (if num (conj query interval-in-s) query)] 
-    (sql/with-connection (get-connection)
-      (sql/with-query-results res query 
-        (->> res
-          (map fix-time)
-          (partition-by :timestamp)
-          (map (partial sort-by (comp sort-order :name)))
-          (apply concat)
-          (skip-missing names)
-          (partition n)
-          f))))))
+    (q query 
+       :row-fn fix-time
+       :result-set-fn #(->> %
+                         (partition-by :timestamp)
+                         (map (partial sort-by (comp sort-order :name)))
+                         (apply concat)
+                         (skip-missing names)
+                         (partition n)
+                         f)))))
 
 (defn rolled-up-values-in-time-range 
   "Find min, max, and average of values aggregated into `num` time slots."
@@ -272,17 +255,17 @@ for long sequences that should not be realized fully into memory."
                where plant=? and 
                      name=? and 
                      timestamp between ? and ? 
-               group by (unixtimestamp div ?)" 
-          ] 
-      (sql/with-connection (get-connection)
-        (sql/with-query-results res [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
-          (doall (map fix-time res)))))))
+               group by (unixtimestamp div ?)"] 
+      (q [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
+         :row-fn fix-time))))
 
 
-(defquery min-max-time-of "Select time of the oldest/newest data point of a time series."
+(defn min-max-time-of 
+  "Select time of the oldest/newest data point of a time series."
   [plant series-name] 
-  "select min(timestamp) as min, max(timestamp) as max from series_data where plant=? and name=?"
-  (fix-time (first res) :min :max))
+  (q ["select min(timestamp) as min, max(timestamp) as max from series_data where plant=? and name=?" plant series-name]
+     :row-fn #(fix-time % :min :max)
+     :result-set-fn first))
 
 ;;;;;;;;;;; sums of park gains ;;;;;;;;;
 (def ^:private daily-template
@@ -293,10 +276,10 @@ for long sequences that should not be realized fully into memory."
       group by name, year,day_of_year) as daily
       group by daily.t order by t") 
 
-(defquery internal-find-gain-template ""
+(defn internal-find-gain-template ""
   [plant]
-  "select gain_series_name_template as t from plant where name=?"
-  (-> res first :t))
+  (q ["select gain_series_name_template as t from plant where name=?" plant]
+     :result-set-fn #(-> % first :t)))
 
 (defn sum-per "Select sum of gains per day of a series in a time interval"
   [type plant start-time end-time] 
@@ -304,10 +287,8 @@ for long sequences that should not be realized fully into memory."
         query (if (not= "day" type) 
                 (str "select sum(value) as value, time from (" daily-template ") as daily group by year(time), " type "(time)")
                 daily-template)]
-    (sql/with-connection (get-connection)
-      (sql/with-query-results res
-        [query plant start-time end-time template]
-        (doall (map #(fix-time % :time) res))))))
+    (q [query plant start-time end-time template]
+       :row-fn #(fix-time % :time))))
 
 (defn sum-per-day [plant start-time end-time]
   (sum-per "day" plant start-time end-time))
@@ -318,10 +299,11 @@ for long sequences that should not be realized fully into memory."
 (defn sum-per-year [plant start-time end-time]
   (sum-per "year" plant start-time end-time))
 
-(defquery available-data "select all dates for which there is any data."
+(defn available-data 
+  "select all dates for which there is any data."
   [plant] 
-  "select date,sum(num) as num from series_summary where plant=? group by date order by date"
-  (doall (map (fn [{d :date :as m}] (assoc m :date (as-unix-timestamp d))) res)))
+  (q ["select date,sum(num) as num from series_summary where plant=? group by date order by date" plant]
+     :row-fn #(fix-time % :date)))
 
 (defn get-metadata "get map of metadata for multiple pv installations in one query." 
   [& names]
@@ -329,9 +311,9 @@ for long sequences that should not be realized fully into memory."
                 (apply str "select * from plant where name=?" (repeat (dec (count names)) " or name=?"))
                 "select * from plant")] 
     ; TODO need real metadata, number of inverters etc.
-    (sql/with-connection (get-connection) 
-       (sql/with-query-results res (reduce conj [query] names)
-            (zipmap (map :name res) (map #(hash-map :address % :anzahlwr 2 :anlagenkwp 2150000) res))))))
+    (q (reduce conj [query] names)
+       :row-fn #(vector (:name %) {:address % :anzahlwr 2 :anlagenkwp 2150000}) 
+       :result-set-fn (partial into {}))))
 
 ;;;;;;;; internal statistics ;;;;;;;;;;;;;;;;;;;;
 (defn data-base-statistics []
@@ -352,79 +334,80 @@ for long sequences that should not be realized fully into memory."
           query (str "select v.name as name, v.timestamp as timestamp, v.value/i.value as value, v.hour as hour, v.s as std_val, i.s as std_ins from (" sub-q ") as v join (" sub-q") as i on i.timestamp=v.timestamp where i.count>58")
           start (as-sql-timestamp start)
           end (as-sql-timestamp end)]
-      (sql/with-connection (get-connection)
-       (sql/with-query-results res [query plant current-name start end plant insolation-name start end] 
-         (doall (map fix-time res))))))
+      (q [query plant current-name start end plant insolation-name start end]
+         :row-fn fix-time)))
 
 
-(defquery maintainance-intervals "Find all known time intervals where any maintainance works was done on a plant"
+(defn maintainance-intervals 
+  "Find all known time intervals where any maintainance works was done on a plant"
   [plant] 
-  "select * from maintainance where plant=?"
-  (doall (map #(fix-time % :start :end) res)))
+  (q ["select * from maintainance where plant=?" plant]
+     :row-fn #(fix-time % :start :end)))
 
-(defquery structure-of "Get the component structure of a plant"
+(defn structure-of 
+  "Get the component structure of a plant"
   [plant] 
-  "select clj from structure where plant=?"
-  (if (:clj (first res)) 
-    (read-string (:clj (first res)))
-    {}))
+  (q ["select clj from structure where plant=?" plant]
+     :result-set-fn #(if (:clj (first %)) 
+                       (read-string (:clj (first %)))
+                       {})))
 
 ;;;;;;;;;;;;;;; relative entropy comparison queries
-;(sql/create-table :analysisscenario 
+;(sql/create-table-ddl :analysisscenario 
 ;                        [:plant "varchar(127)"]
 ;                        [:id :int "PRIMARY KEY NOT NULL AUTO_INCREMENT"]
 ;                        [:name "varchar(500)"]
 ;                        [:settings :text]
 ;                        :table-spec "engine = 'MyIsam'")
-;      (sql/create-table :analysis
+;      (sql/create-table-ddl :analysis
 ;                        [:plant "varchar(255)"]
 ;                        [:scenario :int]
 ;                        [:date :date]                        
 ;                        [:result :text]
 ;                        :table-spec "engine = 'MyIsam'")
-(defquery get-scenarios ""
+(defn get-scenarios ""
   [plant] 
-  "select * from analysisscenario where plant=?"
-  (doall (map #(update-in % [:settings] read-string) res)))
+  (q ["select * from analysisscenario where plant=?" plant]
+     :row-fn #(update-in % [:settings] read-string)))
 
 (defn get-scenario-id "" [plant settings] 
   (binding [*print-length* nil
             *print-level* nil]
     (let [settings (pr-str settings)]      
-  (sql/with-connection (get-connection) 
-    (sql/with-query-results res ["select id from analysisscenario where plant=? and settings=?" plant settings] 
-      (-> res first :id))))))
+  (q ["select id from analysisscenario where plant=? and settings=?" plant settings]
+    :result-set-fn (comp :id first)))))
 
-(defquery get-scenario ""
+(defn get-scenario ""
   [id]
-  "select * from analysisscenario where id=?"
-  (-> res first fix-time (update-in [:settings] read-string)))
+  (q ["select * from analysisscenario where id=?" id]
+     :row-fn #(-> % fix-time (update-in [:settings] read-string))
+     :result-set-fn first))
 
 
 (defn insert-scenario "" [plant name settings]
   (binding [*print-length* nil
             *print-level* nil]
-    (sql/with-connection (get-connection)
-      (sql/insert-record :analysisscenario {:plant plant :settings (pr-str settings) :name name}))))
+    (sql/insert! (get-connection) 
+                 :analysisscenario 
+                 {:plant plant :settings (pr-str settings) :name name})))
 
 (defn insert-scenario-result [plant date analysis-id result]
   (binding [*print-length* nil
             *print-level* nil]
     (let [date (as-sql-timestamp date) 
           e (pr-str result)]
-      (sql/with-connection (get-connection)
-        (sql/insert-record :analysis {:plant plant :date date :result e :scenario analysis-id})))))
+      (sql/insert! (get-connection)
+                   :analysis 
+                   {:plant plant :date date :result e :scenario analysis-id}))))
 
 (defn get-analysis-results "Get results for an analysis scenario." [plant s e analysis-id]
   (let [s (as-sql-timestamp s) 
         e (as-sql-timestamp e)]
-    (sql/with-connection (get-connection)
-      (sql/with-query-results res 
-        ["select result 
+    (q ["select result 
               from analysis
              where plant=? and 
                    date >= ? and date <= ? and 
                    scenario=?
           order by date"
-         plant s e analysis-id]
-        (doall (map (comp read-string :result) res))))))
+        plant s e analysis-id]
+      :row-fn (comp read-string :result))))
