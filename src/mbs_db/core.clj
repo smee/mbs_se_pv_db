@@ -222,6 +222,8 @@ for long sequences that should not be realized fully into memory."
   (let [sort-order (into {} (map vector names (range (count names))))
         n (count names)
         num (or num java.lang.Long/MAX_VALUE)
+        s (as-unix-timestamp start) 
+        e (as-unix-timestamp end)
         interval-in-s (max 1 (long (/ (- (as-unix-timestamp end) (as-unix-timestamp start)) num)))
         names-q (str "(" (join " or " (repeat n "name=?")) ")")
         query (-> (str "select timestamp, value, name from series_data 
@@ -244,20 +246,32 @@ for long sequences that should not be realized fully into memory."
 
 (defn rolled-up-values-in-time-range 
   "Find min, max, and average of values aggregated into `num` time slots."
-  ([plant name start end] (rolled-up-values-in-time-range plant name start end java.lang.Long/MAX_VALUE))
-  ([plant name start end num]
-    (let [s (as-unix-timestamp start) 
+  ([plant names start end] (rolled-up-values-in-time-range plant names start end java.lang.Long/MAX_VALUE))
+  ([plant names start end num] (rolled-up-values-in-time-range plant names start end num doall))
+  ([plant names start end num f] 
+    (let [sort-order (into {} (map vector names (range (count names))))
+          n (count names)
+          s (as-unix-timestamp start) 
           e (as-unix-timestamp end)
           num (max 1 num) 
           interval-in-s (max 1 (long (/ (- e s) num))) ;Mysql handles unix time stamps as seconds, not milliseconds since 1970
-          query "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count, timestamp
-               from series_data 
-               where plant=? and 
-                     name=? and 
-                     timestamp between ? and ? 
-               group by (unixtimestamp div ?)"] 
-      (q [query plant name (as-sql-timestamp start) (as-sql-timestamp end) interval-in-s]
-         :row-fn fix-time))))
+          names-q (str "(" (join " or " (repeat n "name=?")) ")")
+          query (-> (str "select avg(value) as value, min(value) as min, max(value) as max, count(value) as count,timestamp, name from series_data 
+                     where plant=? and 
+                           timestamp  between ? and ? and " 
+                         names-q 
+                         (if num " group by (unixtimestamp div ?),name" "")
+                         " order by timestamp, name"))
+          query (concat [query plant (as-sql-timestamp start) (as-sql-timestamp end)] names [interval-in-s])] 
+      (q query
+         :row-fn fix-time
+         :result-set-fn #(->> %
+                         (partition-by :timestamp)
+                         (map (partial sort-by (comp sort-order :name)))
+                         (apply concat)
+                         (skip-missing names)
+                         (partition n)
+                         f)))))
 
 
 (defn min-max-time-of 
