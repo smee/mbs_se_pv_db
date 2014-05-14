@@ -45,7 +45,7 @@
 (defonce ^{:doc "map of current database connection settings"} current-db-settings (atom nil))
 (defonce ^{:private true :dynamic true :doc "connection pool to be used with `with-connection`"} conn (atom {:datasource nil}))
 
-(defn- get-connection []
+(defn get-connection []
   @conn)
 
 (defn use-db-settings [settings]
@@ -71,8 +71,11 @@
      :num-idle-connections (.getNumIdleConnectionsDefaultUser c)}))
 
 ;;;;;;;;;;;;;;;;;;;; tables definitions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(defn- create-time-series-tables []
-  (sql/create-table-ddl :series_data
+
+
+(defn create-tables []
+  (sql/db-do-commands (get-connection)
+      (sql/create-table-ddl :series_data
                         [:plant "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:name "varchar(255)" "comment 'lookup'"] ; use infobright's lookup feature for better compression
                         [:value "double"] 
@@ -114,11 +117,7 @@
                         [:plant "varchar(127)" "comment 'lookup'"] ;name of the power plant
                         [:name "varchar(127)" "comment 'lookup'"] ;name of the series 
                         [:date "date"]
-                        [:num "integer"]))
-
-(defn create-tables []
-  (sql/db-do-commands (get-connection)
-      (create-time-series-tables)
+                        [:num "integer"])
       ; mutable tables
       (sql/create-table-ddl :maintainance
                         [:start "datetime"] 
